@@ -531,7 +531,7 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
     spendLimitUsd: limit / 100,
   };
   const trade = r.trade === "hvac" ? "an HVAC" : /^[aeiou]/.test(r.trade) ? `an ${r.trade}` : `a ${r.trade}`;
-  const goal = `Get ${trade} visit for ${short}: ${r.problem.replace(/\.$/, "")}. Find out the earliest visit and the total price (trip fee and repair), and book it if it's ${usd(limit)} or less; above that, get the owner's OK while they hold.${replace ? " Also ask what a full replacement would cost." : ""}`;
+  const goal = `Get ${trade} visit for ${short}: ${r.problem.replace(/\.$/, "")}. Ask once for the earliest visit and the price, and book it if it's ${usd(limit)} or less; above that, get the owner's OK while they hold.${replace ? " Also ask what a full replacement would cost." : ""}`;
   const facts: Fact[] = [...task.facts.filter((f) => f.key !== "problem"), { key: "problem", label: "Problem", value: r.problem, sensitive: false, source: "user" }];
   const moved = await transitionTask(
     task.id,
@@ -544,6 +544,7 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
       facts,
       constraints: [
         `Open by saying you're an AI assistant calling for ${config.user.name} at ${FIRM.name}, and that the call is recorded`,
+        "Keep the call short: short sentences, each question once. If they give the price in parts (a diagnostic plus a trip fee), add it up yourself and never ask for the total again. Don't read back what they said until the end, then confirm the time, price and any confirmation number in one sentence and say goodbye",
         `Only use ask_customer to get the owner's OK on a total over ${usd(limit)}. Never hold the line for anything else: if they ask for something you don't have (a model number, whether the outdoor unit runs, a gate code), say their tech can check on site or the tenant can show them, and carry on`,
       ],
       authority,
