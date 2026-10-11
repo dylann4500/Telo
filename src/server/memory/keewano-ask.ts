@@ -154,12 +154,17 @@ export async function askKeewano(question: string, userId: string): Promise<{ an
     throw new Error(`Refusing to run generated SQL: ${sql.slice(0, 120)}`);
   }
   const started = Date.now();
-  const rows = await memory.sql(sql);
+  // With the answer, the newest event Keewano can already see: only Telo's writes after it are missing.
+  const [rows, newest] = await Promise.all([
+    memory.sql(sql),
+    memory.sql("SELECT max(event_datetime) AS newest FROM events").catch(() => [] as Record<string, unknown>[]),
+  ]);
   const ms = Date.now() - started;
   // Keewano takes a while to make new events queryable; give the answer
-  // step Telo's own recent writes so a question about the last few minutes
-  // is still answered correctly.
-  const recent = await recentTypedEvents(userId);
+  // step Telo's own writes it can't see yet, so a question about the last
+  // few minutes is still answered correctly, and nothing is counted twice.
+  const seenUpTo = Date.parse(String(newest[0]?.newest ?? ""));
+  const recent = (await recentTypedEvents(userId)).filter((e) => Number.isNaN(seenUpTo) || Date.parse(e.at) > seenUpTo);
   const answer = await llm.structured({
     name: "keewano-answer",
     system:
