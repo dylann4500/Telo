@@ -68,6 +68,8 @@ flowchart LR
 7. Claude decides the next step: complete, ask you (a decision, or a detail the business needs), call the next business, call back now, retry later, or **schedule** a call for when the business said ("call back in 3 days", "we open Monday at 9", "we'll call you back"). Scheduled calls wake on their own (inside 8 AM–9 PM), a business calling Telo's line back is matched to its task, and every task has a call cap. You get one concise text.
 8. Everything that happened is recorded as an event. Typed events (categories, cents, seconds; never names or transcripts) are mirrored to Keewano on four streams: you × business (the main memory), the business, the task, and you.
 
+**Email and calendar (Google):** Telo reads your inbox, read-only. A receipt or confirmation from a business is saved to memory. One that answers what Telo was waiting on finishes the task without the call. One that needs a call ("your bill went up, call us") becomes a suggestion Telo makes only after you say yes. With your calendar connected, Telo books inside your free time instead of asking when works, and puts the booking on your calendar. Connect once with `npm run google:connect`.
+
 More detail: [docs/architecture.md](docs/architecture.md). The sponsor research behind every integration detail is in [docs/integrations/dial.md](docs/integrations/dial.md) and [docs/integrations/keewano.md](docs/integrations/keewano.md).
 
 ## Run it locally (no accounts needed)

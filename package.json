@@ -15,7 +15,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "llm:check": "tsx scripts/llm-check.ts",
-    "lab": "tsx scripts/edge-lab.ts"
+    "lab": "tsx scripts/edge-lab.ts",
+    "google:connect": "tsx scripts/google-connect.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
