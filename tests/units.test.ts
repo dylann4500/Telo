@@ -31,6 +31,10 @@ describe("task state machine", () => {
     expect(canTransition("scheduled", "reviewing")).toBe(true); // they called back first
     expect(canTransition("scheduled", "calling")).toBe(false);
   });
+  it("starts a call Telo suggested from an email once you approve it", () => {
+    expect(canTransition("needs_approval", "new")).toBe(true);
+    expect(canTransition("needs_info", "scheduled")).toBe(true); // your answer waits for the time the business gave
+  });
 });
 
 describe("calling hours", () => {
