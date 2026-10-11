@@ -81,6 +81,8 @@ export const config = {
     pollSeconds: Number(env("TELO_MAIL_POLL_SECONDS") ?? "60"),
     // How far back the inbox scan looks (it never reprocesses a message).
     lookbackDays: Number(env("TELO_MAIL_LOOKBACK_DAYS") ?? "2"),
+    // On first connect, read what's already in the inbox (default: only new mail).
+    readBacklog: env("TELO_MAIL_READ_BACKLOG") === "true",
   },
 
   calendar: {

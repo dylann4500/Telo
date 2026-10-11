@@ -3,7 +3,7 @@ import * as agent from "./agent";
 import type { ReadEmailResult } from "./agent/schemas";
 import { config } from "./config";
 import { db } from "./db/client";
-import { emails, organizations, questions, tasks, type UserRow } from "./db/schema";
+import { appState, emails, organizations, questions, tasks, type UserRow } from "./db/schema";
 import { newId, orgKeyFor } from "./ids";
 import { getMail } from "./mail";
 import { domainOf, type MailMessage } from "./mail/provider";
@@ -33,6 +33,14 @@ export async function pollInbox(): Promise<number> {
     const user = await getUser(config.user.id);
     if (!user) return 0;
     const ids = await mail.recent(config.mail.lookbackDays, 20);
+    // First poll of a real inbox: what's already there counts as seen, so
+    // connecting doesn't send old mail to Claude or write it to memory.
+    if (mail.name === "gmail" && !config.mail.readBacklog && !(await db.query.appState.findFirst({ where: eq(appState.key, "mail.baseline") }))) {
+      for (const id of ids) await db.insert(emails).values({ id, userId: user.id, provider: mail.name, status: "skipped" }).onConflictDoNothing();
+      await db.insert(appState).values({ key: "mail.baseline", value: new Date().toISOString() }).onConflictDoNothing();
+      console.info(`[inbox] connected: ${ids.length} messages already in the inbox marked as seen; reading new mail from now on`);
+      return 0;
+    }
     for (const id of ids.reverse()) {
       const claimed = await db.insert(emails).values({ id, userId: user.id, provider: mail.name, status: "new" }).onConflictDoNothing().returning();
       if (!claimed.length) continue; // seen before

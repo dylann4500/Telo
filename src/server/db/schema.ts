@@ -139,7 +139,7 @@ export const emails = sqliteTable(
     id: text("id").primaryKey(), // the provider's message id
     userId: text("user_id").notNull(),
     provider: text("provider").notNull(),
-    status: text("status").$type<"new" | "ignored" | "processed" | "failed">().notNull(),
+    status: text("status").$type<"new" | "skipped" | "ignored" | "processed" | "failed">().notNull(), // skipped: already in the inbox when Gmail was connected
     fromDomain: text("from_domain"),
     receivedAt: integer("received_at", { mode: "timestamp_ms" }),
     subject: text("subject"),
