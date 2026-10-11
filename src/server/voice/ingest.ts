@@ -57,6 +57,9 @@ export async function ingestVoiceEvent(e: VoiceEvent): Promise<void> {
       // A text that couldn't be delivered (e.g. carriers blocking an
       // unregistered number) but needs the user: call them instead.
       const msg = rows[0];
+      // An optional offer (a call suggested from an email) never becomes a phone call.
+      const offer = msg?.taskId ? await getTask(msg.taskId) : undefined;
+      if (offer?.source === "email" && offer.status === "needs_approval") return;
       if (msg && ["approval", "question", "result", "failure"].includes(msg.kind)) {
         const { notify } = await import("../notify");
         await notify({ userId: msg.userId, taskId: msg.taskId, kind: msg.kind as "approval", body: msg.body, channel: "voice", dedupeKey: `voice-fallback:${msg.id}` });

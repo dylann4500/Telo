@@ -86,6 +86,8 @@ async function remindWaitingUsers() {
       ),
     );
   for (const t of waiting) {
+    // A call Telo only offered (from an email) isn't worth a nudge.
+    if (t.source === "email" && t.status === "needs_approval") continue;
     const user = await getUser(t.userId);
     const q = await openQuestion(t.id);
     if (!user || !q || !withinCallingHours(new Date(), user.timezone)) continue;
