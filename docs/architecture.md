@@ -31,7 +31,17 @@ The legal moves are in `src/server/domain/state-machine.ts`. Every transition is
 - `concierge.handleUserInput` is the single entry point for texts, dashboard messages, live voice-tool requests and call transcripts. One structured Claude call (`route-inbound`) turns the input into actions.
 - `notify` stores every outbound message (the dashboard thread) and delivers it. Replies go back on the channel you used; proactive updates go to the task's channel, otherwise `TELO_USER_CHANNEL`. A dedupe key per milestone (`ack:<task>`, `q:<question>`, `done:<task>:<status>`) means a retried step never texts twice.
 - **Live calls with you:** Dial's agent calls `ask_telo` on `/api/mcp` with what you said. The concierge runs inside an `AsyncLocalStorage` capture, so messages are returned for the agent to say instead of being texted. After 25 seconds the capture closes and anything later goes out as a normal update.
-- A text that fails to deliver and needs you (question, approval, result) is retried as a phone call.
+- **Text, or text and call** (`users.callUpdates`, the toggle in the thread header): with calls on, anything that needs you, reports a call, or finishes a task is texted and also rung through, in waking hours (any time a business is waiting on the line, or late if you've been talking to Telo). A text that fails is only marked failed.
+
+## During a call
+
+Dial's agent can call Telo's tools mid-call (`live-call.ts`, behind `/api/mcp`). Dial sends no call id, so each request is matched to a live call by the other party's number and the direction: the owner gets `get_status` and `ask_telo`; a business Telo called gets `report_progress`, `ask_customer`, `wait_for_customer` and `check_calendar`.
+
+- `ask_customer` texts you (and rings you, with calls on) while the business holds; it refuses secrets and lines meant for the person on the phone. The question is stored with `context.live`.
+- `wait_for_customer` waits up to 15 s per call and tells the agent what to say meanwhile, so the line is never silent; after 90 s it tells the agent to wrap up and call back.
+- Your answer (a text, the dashboard's live card, or Telo's call) lands in the task's facts or `followUp` while the task stays `calling`; the waiting tool picks it up. A question still open when the call ends lapses, and the review asks the usual way.
+- `check_calendar` answers free or busy for the offered time, with free windows nearby, never what your events are.
+- The call lab (`npm run lab:calls`) plays these calls with Claude as Dial's agent; that's how the prompt and tool wording were tuned.
 
 ## Authority
 
@@ -39,7 +49,7 @@ Each task gets an authority envelope from `understand-task`: `allowed` (routine 
 - identify as an AI calling for you
 - never share passwords, PINs, security answers, card or Social Security numbers
 - never claim anything not in the brief
-- defer anything in `askFirst` with "I'll confirm and call back", getting a reference number first
+- ask you about anything in `askFirst` while they wait (`ask_customer`); if you don't answer in time, defer with "I'll confirm and call back", getting a reference number first
 
 ## Memory model
 
@@ -49,7 +59,7 @@ Each task gets an authority envelope from `understand-task`: `allowed` (routine 
 
 ### Event taxonomy
 
-`task.created`, `task.info_requested`, `task.info_received`, `task.plan_generated`, `memory.retrieved`, `call.started`, `call.connected`, `call.completed`, `call.failed`, `call.transcript_processed`, `business.fact_discovered`, `offer.received`, `offer.accepted`, `offer.declined`, `commitment.received`, `commitment.fulfilled`, `commitment.broken`, `confirmation.received`, `approval.requested`, `approval.granted`, `approval.denied`, `followup.required`, `task.completed`, `task.failed`, `task.cancelled`, `message.sent`, `preference.saved`.
+`task.created`, `task.info_requested`, `task.info_received`, `task.plan_generated`, `memory.retrieved`, `call.started`, `call.connected`, `call.completed`, `call.failed`, `call.transcript_processed`, `business.fact_discovered`, `offer.received`, `offer.accepted`, `offer.declined`, `commitment.received`, `commitment.fulfilled`, `commitment.broken`, `confirmation.received`, `approval.requested`, `approval.granted`, `approval.denied`, `followup.required`, `task.completed`, `task.failed`, `task.cancelled`, `message.sent`, `preference.saved`, `email.received`, `calendar.event_created`, and the local-only `call.asked_user` and `calendar.checked`. The task page's "How Telo handled it" (`flow.ts`) folds these into one row per step.
 
 ### Keewano mapping
 
@@ -63,7 +73,7 @@ Only events with a `typed` slice reach Keewano. `memory/keewano.ts` holds the ca
 - **One batch per entity.** Each batch starts with `entity_kind`, then context, then the anchor, all stamped with the event's second. For example, a promise becomes `confirmation_number("A1832")`, `commitment_amount_cents(2000)`, `commitment_received("account_credit")`.
 - **Idempotency:** `dataSessionId = uuidv5(eventId | entity)` with `batch: 1`, so a retry can't double-count.
 - **Spacing:** events from one call are recorded one second apart, so context columns can't collide.
-- **Reads:** for one entity, one `SELECT event_datetime, <column> FROM events WHERE user_id = '<uuid>'` per column over the Postgres wire protocol. Rows are regrouped by second into events, then merged with the last 15 minutes of Telo's own writes, which Keewano can't show yet.
+- **Reads:** for one entity, one `SELECT event_datetime, <column> FROM events WHERE user_id = '<uuid>'` per column over the Postgres wire protocol. Rows are regrouped by second into events, then merged with the last 60 minutes of Telo's own writes (`KEEWANO_CACHE_MINUTES`), which Keewano can't show yet.
 - **Questions nobody prepared for:** `memory/keewano-ask.ts` has Claude write one read-only SELECT over the catalog columns. The statement is checked (SELECT only, no semicolons or write keywords), run, and the rows are answered from. The SQL is logged as a `memory.retrieved` event.
 
 ## Providers

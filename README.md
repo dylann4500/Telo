@@ -14,10 +14,11 @@ Built for SpeedHacks (SF Tech Week) on **[Dial](https://getdial.ai)** (phone num
 
 - **Text Telo's number** (SMS or iMessage) from your phone. That's the main interface.
 - **Call Telo's number.** Dial's voice agent answers as Telo and uses Telo's tools mid-call: it can start a task, answer a question Telo asked you, take your decision, or tell you the status.
+- **Help while the business waits.** If the business needs something only you have ("what's the account number?") or a decision only you can make ("$18/month instead of cancelling?"), Telo's agent says "Let me check with Dylan, one moment," texts (and calls) you, keeps them company while you answer, and finishes on the same call. It checks your calendar before accepting a time. If you don't answer in time, it says it'll call back, and asks you the usual way.
 - **Telo texts you back** at the moments that matter: *"Calling Equinox now."* *"They offered $18/month instead of cancelling. Accept, or keep cancelling?"* *"Done. Membership ends Nov 8, confirmation 18392."*
 - **Text me, or text and call me.** A toggle in the dashboard's thread header (or just text Telo "just text me" / "call me with updates"). With calls on, Telo also phones you when it needs an answer, when a call has news, and when a task is done; at night only if you've been talking to it, or if a business is waiting on the line.
 - **Ask anytime:** *"any update?"*, *"what did Comcast promise last time?"* Telo answers from live task state and its memory.
-- **The dashboard** (http://localhost:3210) mirrors the thread as it looks on your phone, plus the work behind it: live calls, transcripts, what Telo remembered, and the query that fetched it.
+- **The dashboard** (http://localhost:3210) mirrors the thread as it looks on your phone, plus the work behind it: live calls (with a box to answer Telo while the business waits), transcripts, what Telo remembered and the query that fetched it, and for each task a step-by-step view of how Telo handled it.
 
 ## Architecture
 
@@ -163,7 +164,9 @@ See [docs/demo.md](docs/demo.md). In short:
 src/server/
   orchestrator.ts      task state machine: understand, plan, dial, review
   concierge.ts         routes every inbound message, call transcript and voice-tool request
-  notify.ts            outbound messages, channel choice, dedupe, voice capture
+  notify.ts            outbound messages, channel choice, dedupe, voice capture, text + call
+  live-call.ts         Telo's tools during calls: ask_customer, wait_for_customer, check_calendar, status
+  flow.ts              a task's events and calls → the task page's "How Telo handled it" steps
   status.ts            "what's going on?" answers and the voice-line digest
   agent/               Claude calls (prompts, zod schemas), call-brief renderer, offline stand-in
   voice/               Dial client, webhook verify/normalize, simulated line, event ingest
@@ -173,7 +176,7 @@ src/server/
   time.ts              the user's timezone: "now" for Claude, calling hours, scheduled-time labels
 src/app/api/           webhooks/dial, mcp, state, tasks, messages, dev
 src/components/        dashboard (iMessage-style thread, task board, live call, task detail)
-scripts/               setup, tunnel, dial:setup, keewano:check, llm:check, lab (edge cases with real Claude)
+scripts/               setup, tunnel, dial:setup, keewano:check, llm:check, lab (edge cases with real Claude), lab:calls (mid-call help, Claude as the voice agent)
 tests/                 unit + end-to-end tests on the simulated stack, including the autonomy edge cases
 ```
 
@@ -187,7 +190,7 @@ tests/                 unit + end-to-end tests on the simulated stack, including
 
 - Single user (one `TELO_USER_PHONE`); the data model is per user throughout.
 - Dial-hosted calls don't stream transcripts, so the dashboard shows live status and the transcript lands when the call ends. The simulated line does stream.
-- Approvals happen between calls ("I'll confirm and call back"), not while the business waits on the line.
+- Help while the business waits is tested in the call lab (Claude playing Dial's agent) and on the simulated line, not yet on a live Dial call. If Dial's agent can't talk between tool calls, the waits are silent; the fallback is the old "I'll confirm and call back".
 - The Keewano timeline read uses one SQL query per event column and reassembles events by second. This follows Keewano's documented step-function semantics but was not verified against a live project before the event; `npm run keewano:check` confirms it on site.
 - Business phone numbers come from the user, the directory or `DEMO_TARGET_PHONE`; there's no places lookup.
 - A status digest is written into the voice line's prompt so callers hear status even if the agent skips a tool call. That's fine for a single-user demo; turn it off with `TELO_INBOUND_STATUS_IN_PROMPT=false`.
