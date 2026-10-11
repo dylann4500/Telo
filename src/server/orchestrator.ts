@@ -166,14 +166,24 @@ function fakePhone(name: string): string {
   return `+1415555${String(h % 10000).padStart(4, "0")}`;
 }
 
-/** Fills in a phone number from the directory, the demo stand-in number, or (mock only) a fake one. */
+/**
+ * The number Telo may dial for a business: one the user gave, the directory's,
+ * or the demo stand-in. Never a number the model produced on its own.
+ */
 function resolvePhone(name: string, given: string | null, directory: { name: string; phone: string | null; aliases: string[] }[]): string | null {
   if (given) return normalizePhone(given);
   const key = name.toLowerCase();
   const hit = directory.find((d) => d.name.toLowerCase() === key || d.aliases.some((a) => a.toLowerCase() === key));
   if (hit?.phone) return hit.phone;
-  if (config.demo.targetPhone) return config.demo.targetPhone;
-  return getVoice().name === "mock" ? fakePhone(name) : null;
+  return config.demo.targetPhone ?? null;
+}
+
+/** Only trust a model-extracted number if the user actually typed it. */
+function userTyped(phone: string | null, task: TaskRow): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "").slice(-10);
+  const said = [task.request, ...task.facts.filter((f) => f.source === "user").map((f) => f.value)].join(" ").replace(/\D/g, "");
+  return digits.length === 10 && said.includes(digits) ? phone : null;
 }
 
 export function normalizePhone(raw: string): string {
@@ -236,13 +246,14 @@ async function understand(task: TaskRow): Promise<boolean> {
 
   const targets: TaskTarget[] = r.targets.map((t) => {
     const existing = task.targets.find((x) => x.name.toLowerCase() === t.name.toLowerCase());
-    return { name: t.name, kind: t.kind, phone: resolvePhone(t.name, existing?.phone ?? t.phone, directory) };
+    return { name: t.name, kind: t.kind, phone: resolvePhone(t.name, existing?.phone ?? userTyped(t.phone, task), directory) };
   });
-  for (const t of targets) await upsertOrganization(t);
+  for (const t of targets) await upsertOrganization({ ...t, phone: userTyped(t.phone, task) });
   const facts = mergeFacts(task.facts, r.facts.map((f) => ({ ...f, source: "user" as const })));
   const missing: InfoField[] = r.missing.filter((m) => m.required && !facts.some((f) => f.key === m.key && f.value));
-  for (const t of targets) {
-    if (!t.phone) missing.push({ key: `phone_${orgKeyFor(t.name)}`, label: `${t.name}'s number`, question: `What's the number for ${t.name}?`, sensitive: false, required: true });
+  // The simulated line can call anyone; a real call needs a real number.
+  for (const t of targets.filter((x) => !x.phone && getVoice().name !== "mock")) {
+    missing.push({ key: `phone_${orgKeyFor(t.name)}`, label: `${t.name}'s number`, question: `What's the number for ${t.name}?`, sensitive: false, required: true });
   }
   if (r.needsPhoneCall && !targets.length && !missing.length) {
     missing.push({ key: "business", label: "Who to call", question: "Who should I call for this, and what's their number?", sensitive: false, required: true });
@@ -479,14 +490,16 @@ async function placeOne(task: TaskRow, user: UserRow, call: CallRow): Promise<bo
       typed: { outcome: "dropped" },
     });
   };
-  if (!call.targetPhone) {
+  // A simulated call gets a placeholder number; it's never stored or dialed for real.
+  const to = call.targetPhone ?? (getVoice().name === "mock" ? fakePhone(call.targetName) : null);
+  if (!to) {
     await fail("no phone number");
     return false;
   }
   try {
     const res = await getVoice().placeCall({
       callId: call.id,
-      to: call.targetPhone,
+      to,
       instructions: rendered.instructions,
       idempotencyKey: `telo:${call.id}`,
     });
