@@ -65,6 +65,7 @@ export function TaskDetail() {
         <main className="space-y-5">
           {task.waiting && <Waiting task={task} onDone={() => void mutate()} />}
           {live && <LivePanel call={live} />}
+          {task.status === "scheduled" && <Scheduled task={task} onDone={() => void mutate()} />}
           {task.result && (
             <Card className={clsx("p-4", task.status === "completed" ? "border-done/30" : "border-bad/30")}>
               <SectionTitle>{task.status === "completed" ? "Result" : "Where it stopped"}</SectionTitle>
@@ -125,6 +126,29 @@ export function TaskDetail() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return <div className="mx-auto w-full max-w-6xl px-6 py-10 text-muted">{children}</div>;
+}
+
+function Scheduled({ task, onDone }: { task: TaskDetailDTO; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Card className="border-work/30 p-4">
+      <SectionTitle>Calling later</SectionTitle>
+      <p className="text-[15px] leading-relaxed">{task.statusDetail}</p>
+      <p className="mt-1 text-[13px] text-muted">Telo calls on its own at that time. You can text it to call now instead.</p>
+      <button
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await post(`/api/tasks/${task.id}/wake`);
+          setBusy(false);
+          onDone();
+        }}
+        className="mt-3 rounded-lg border border-line px-3 py-1.5 text-[13px] font-medium hover:border-ink disabled:opacity-50"
+      >
+        Call now
+      </button>
+    </Card>
+  );
 }
 
 function Waiting({ task, onDone }: { task: TaskDetailDTO; onDone: () => void }) {
