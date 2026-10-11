@@ -58,7 +58,14 @@ export function Thread({
   messages.forEach((m, i) => {
     if (m.direction === "out" && m.taskId && waiting.has(m.taskId) && (m.kind === "approval" || m.kind === "question")) lastAsk.set(m.taskId, i);
   });
-  const lastMine = messages.findLastIndex((m) => m.direction === "in" && m.kind !== "call");
+  // A text that failed and was then delivered by a phone call shows once.
+  const phonedIn = new Set(
+    messages
+      .filter((m, i) => m.direction === "out" && m.status === "failed" && messages.slice(i + 1, i + 4).some((n) => n.direction === "out" && n.channel === "voice" && n.body === m.body))
+      .map((m) => m.id),
+  );
+  const visible = messages.filter((m) => !phonedIn.has(m.id));
+  const lastMine = visible.findLastIndex((m) => m.direction === "in" && m.kind !== "call");
   const thinking = messages.at(-1)?.direction === "in";
   const smsThread = messages.filter((m) => m.direction === "in").at(-1)?.channel === "sms";
 
@@ -99,14 +106,14 @@ export function Thread({
           </div>
         )}
 
-        {messages.map((m, i) => {
-          const prev = messages[i - 1];
-          const next = messages[i + 1];
+        {visible.map((m, i) => {
+          const prev = visible[i - 1];
+          const next = visible[i + 1];
           const showDivider = !prev || new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() > GAP_MS || prev.channel !== m.channel;
           const mine = m.direction === "in";
           const endOfRun = !next || next.direction !== m.direction || new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() > 60_000;
           const task = m.taskId ? waiting.get(m.taskId) : undefined;
-          const options = task && lastAsk.get(task.id) === i ? task.waiting?.options : undefined;
+          const options = task && lastAsk.get(task.id) === messages.indexOf(m) ? task.waiting?.options : undefined;
 
           if (m.kind === "call") {
             return (
@@ -115,7 +122,8 @@ export function Thread({
                 <div className="rise mx-auto my-2 flex max-w-[85%] items-start gap-2 rounded-2xl border border-black/5 px-3 py-2 text-[12.5px] text-im-meta dark:border-white/10">
                   <Phone className="mt-0.5 size-3.5 shrink-0" />
                   <span>
-                    <span className="font-medium text-im-gray-ink">You called Telo.</span> {m.body.replace(/^\(on the phone\)\s*/, "")}
+                    <span className="font-medium text-im-gray-ink">{/^\(Telo called you\)/.test(m.body) ? "Telo called you." : /^\(missed/.test(m.body) ? "Missed call." : "You called Telo."}</span>{" "}
+                    {m.body.replace(/^\((on the phone|you called Telo|Telo called you|missed: )\)?\s*/, "").replace(/^Telo's call went to voicemail\)?/, "Telo's call went to voicemail.")}
                   </span>
                 </div>
               </Fragment>
@@ -139,6 +147,7 @@ export function Thread({
                   {m.body}
                 </div>
               </div>
+              {!mine && m.channel === "voice" && m.kind !== "call" && <p className="-mt-1 mb-2 pl-2 text-[11px] text-im-meta">Told you by phone</p>}
               {options && (
                 <div className="mb-2 flex flex-wrap gap-1.5 pl-1">
                   {options.map((o) => (
