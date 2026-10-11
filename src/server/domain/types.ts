@@ -236,6 +236,8 @@ export interface TaskContext extends EntityRefs {
   /** Where the work order is: triage, calling vendors, booked (waiting for the visit), checking it's fixed, closed. */
   stage?: "triage" | "dispatching" | "booked" | "checking" | "closed";
   problem?: string;
+  /** The work order's short title, e.g. "AC not cooling". */
+  issue?: string;
   /** Asset history says ask for a replacement price too (or the owner asked for one). */
   replaceQuote?: boolean;
   booked?: { vendor: string; cents: number; startsAt: string | null; endsAt: string | null; confirmation: string | null; ownerApproved: boolean };

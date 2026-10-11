@@ -61,6 +61,31 @@ export interface TaskSummaryDTO {
   callsMade: number;
   /** When a scheduled task will call next. */
   wakeAt: string | null;
+  /** Property management: the work order this task is, for the board and the flowchart. */
+  workOrder: WorkOrderDTO | null;
+}
+
+export type WorkOrderStage = "triage" | "calling" | "waiting" | "booked" | "checking" | "done";
+
+export interface WorkOrderDTO {
+  stage: WorkOrderStage;
+  trade: string | null;
+  severity: string | null;
+  issue: string | null;
+  unit: string;
+  property: string | null;
+  tenant: string | null;
+  owner: string | null;
+  /** Who Telo is waiting on right now, if anyone. */
+  waitingOn: { role: "owner" | "tenant" | "manager"; name: string } | null;
+  /** The vendors being called (or the one booked). */
+  vendors: string[];
+  booked: { vendor: string; window: string | null; cents: number; confirmation: string | null; ownerApproved: boolean } | null;
+  photos: number;
+  replaceQuote: boolean;
+  /** Vendors in the order Keewano's history ranked them, best first. */
+  ranked: string[];
+  emergency: boolean;
 }
 
 export interface MessageDTO {
@@ -87,6 +112,12 @@ export interface StateDTO {
   liveUserCall: LiveCallDTO | null;
   /** Shown until the user's phone is linked: text "LINK <code>" to Telo's number. */
   pairingCode: string | null;
+  /** Property management: the firm, and work-order numbers before Telo (seeded history) and with it. */
+  firm: string;
+  metrics: {
+    before: { workOrders: number; touches: number; daysToFix: number } | null;
+    after: { workOrders: number; touches: number; daysToFix: number } | null;
+  };
   /** The latest question nobody prepared for, answered with live SQL on Keewano. */
   lastKeewanoQuery: { question: string; answer: string | null; sql: string; rows: number; ms: number; at: string } | null;
 }

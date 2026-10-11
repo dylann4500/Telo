@@ -134,3 +134,8 @@ export function vendorByName(name: string | null | undefined): Vendor | undefine
     return k === key || k.replace(/and/g, "") === key.replace(/and/g, "") || (key.length >= 6 && (k.startsWith(key) || key.startsWith(k)));
   });
 }
+
+/** How a person says an asset type: "AC", "water heater". */
+export function assetLabel(type: string): string {
+  return ({ ac: "AC", water_heater: "water heater", heat_pump: "heat pump", garage_door: "garage door" } as Record<string, string>)[type] ?? type.replace(/_/g, " ");
+}

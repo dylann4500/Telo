@@ -112,3 +112,19 @@ export function formatWhen(date: Date, tz: string, opts: { now?: Date; absolute?
   }
   return `${date.toLocaleDateString("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" })} at ${time}`;
 }
+
+const LONG_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** A visit window the way a text says it: "tonight 8-9 PM", "tomorrow 9-11 AM", "Thursday 1 PM-3 PM". */
+export function windowLabel(start: Date, end: Date | null, tz: string, now = new Date()): string {
+  const s = localParts(start, tz);
+  const n = localParts(now, tz);
+  const t = localParts(new Date(now.getTime() + 86_400_000), tz);
+  const same = (a: Parts, b: Parts) => a.year === b.year && a.month === b.month && a.day === b.day;
+  const day = same(s, n) ? (s.hour >= 17 ? "tonight" : "today") : same(s, t) ? "tomorrow" : LONG_DAYS[s.weekday];
+  const hm = (p: Parts) => `${((p.hour + 11) % 12) + 1}${p.minute ? `:${String(p.minute).padStart(2, "0")}` : ""}`;
+  const ap = (p: Parts) => (p.hour >= 12 ? "PM" : "AM");
+  if (!end) return `${day} at ${hm(s)} ${ap(s)}`;
+  const e = localParts(end, tz);
+  return ap(s) === ap(e) ? `${day} ${hm(s)}-${hm(e)} ${ap(e)}` : `${day} ${hm(s)} ${ap(s)}-${hm(e)} ${ap(e)}`;
+}

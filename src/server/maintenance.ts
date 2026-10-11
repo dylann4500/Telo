@@ -10,11 +10,11 @@ import { newId } from "./ids";
 import { recordEvent } from "./memory/events";
 import { notify } from "./notify";
 import { advance, finalizeTask, kick } from "./orchestrator";
-import { assetFor, FIRM, getAsset, getOwner, getTenancy, getUnit, getVendor, homeOf, isFictional, vendorByName, type Party } from "./portfolio";
+import { assetFor, assetLabel, FIRM, getAsset, getOwner, getTenancy, getUnit, getVendor, homeOf, isFictional, vendorByName, type Party } from "./portfolio";
 import { assetHistory, rankVendors, shouldQuoteReplacement, type Scorecard } from "./portfolio/insights";
 import { containsSecret, maskSecrets } from "./redact";
 import { callIsLive, getTask, getUser, listCalls, patchTask, transitionTask } from "./tasks/repo";
-import { formatWhen, nowContext } from "./time";
+import { formatWhen, nowContext, windowLabel } from "./time";
 import { getVoice } from "./voice";
 
 // Property management: maintenance work orders, end to end.
@@ -212,7 +212,7 @@ async function tenantFollowUp(party: Party, task: TaskRow & { context: TaskConte
   }
   if (ctx.stage === "booked" && !ctx.accessConfirmed && YES.test(body)) {
     await patchTask(task.id, { context: { ...ctx, accessConfirmed: true }, facts: [...task.facts.filter((f) => f.key !== "access_confirmed"), { key: "access_confirmed", label: "Tenant agreed to entry", value: `Yes (${new Date().toISOString()})`, sensitive: false, source: "user" }] });
-    const when = ctx.booked?.startsAt ? formatWhen(new Date(ctx.booked.startsAt), config.user.timezone) : "then";
+    const when = ctx.booked?.startsAt ? windowLabel(new Date(ctx.booked.startsAt), ctx.booked.endsAt ? new Date(ctx.booked.endsAt) : null, config.user.timezone) : "then";
     await notifyParty({ party, taskId: task.id, kind: "reply", body: `Thanks ${firstName(party.name)}. They'll be there ${when}.`, dedupeKey: `access-ok:${task.id}` });
     return true;
   }
@@ -283,20 +283,23 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
   if (!picks.length) throw new Error(`No approved ${r.trade} vendor in the portfolio`);
   const passedOver = ranking.value.slice(2).filter((s) => s.noShows > 0);
   const lines: string[] = [];
+  let historyLine = "";
   if (asset && history?.value.repairs.length) {
     const firstRepair = new Date(history.value.repairs[0].at);
     const nth = history.value.repairs.length + 1;
-    lines.push(
-      `This is the ${ordinal(nth)} ${asset.type.replace(/_/g, " ")} failure at this unit since ${firstRepair.toLocaleString("en-US", { month: "long", timeZone: user.timezone })} (${usd(history.value.totalCents)} in repairs; the unit is ${history.value.ageYears} years old).`,
-    );
+    historyLine = `This is the ${ordinal(nth)} ${assetLabel(asset.type)} failure at this unit since ${firstRepair.toLocaleString("en-US", { month: "long", timeZone: user.timezone })} (${usd(history.value.totalCents)} in repairs so far; the ${assetLabel(asset.type)} is ${history.value.ageYears} years old).`;
+    lines.push(historyLine);
   }
-  if (passedOver.length) lines.push(`${passedOver.map((s) => `${s.vendor.name} no-showed ${s.noShows} time${s.noShows === 1 ? "" : "s"} recently`).join("; ")}, so ${picks.map((s) => s.vendor.name).join(" and ")} are called first.`);
-  else lines.push(`Calling ${picks.map((s) => `${s.vendor.name} (${record(s)})`).join(" and ")}.`);
-  if (replace) lines.push(`Ask for a replacement price too.`);
+  const names = picks.map((s) => s.vendor.name).join(" and ");
+  const vendorLine = passedOver.length
+    ? `${passedOver.map((s) => `${s.vendor.name} no-showed ${s.noShows} time${s.noShows === 1 ? "" : "s"} recently`).join("; ")}, so ${names} are called first.`
+    : `Calling ${picks.map((s) => `${s.vendor.name} (${record(s)})`).join(" and ")}.`;
+  lines.push(vendorLine);
+  if (replace) lines.push("Asking for a replacement price too.");
   const memory: MemoryBrief = {
     summary: lines.join(" "),
     events: [
-      ...(history?.value.repairs ?? []).map((rep, i) => ({ id: `rep_${i}`, type: "asset.repaired", summary: `Repaired the ${asset!.type.replace(/_/g, " ")}: ${usd(rep.cents)}`, occurredAt: rep.at })),
+      ...(history?.value.repairs ?? []).map((rep, i) => ({ id: `rep_${i}`, type: "asset.repaired", summary: `Repaired the ${assetLabel(asset!.type)}: ${usd(rep.cents)}`, occurredAt: rep.at })),
       ...ranking.value.map((s) => ({ id: `score_${s.vendor.id}`, type: "vendor.scorecard", summary: `${s.vendor.name}: ${record(s)}`, occurredAt: new Date().toISOString() })),
     ],
     retrievedAt: new Date().toISOString(),
@@ -337,7 +340,7 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
       constraints: [`Open by saying you're an AI assistant calling for ${config.user.name} at ${FIRM.name}, and that the call is recorded`],
       authority,
       memory,
-      context: { ...ctx, trade: r.trade, severity: r.severity, jobCode: r.jobCode, problem: r.problem, asset: asset?.id, ranked: ranking.value.map((s) => s.vendor.id), replaceQuote: replace, stage: "dispatching" },
+      context: { ...ctx, trade: r.trade, severity: r.severity, jobCode: r.jobCode, problem: r.problem, issue: r.title, asset: asset?.id, ranked: ranking.value.map((s) => s.vendor.id), replaceQuote: replace, stage: "dispatching" },
       statusDetail: `Calling ${picks.map((s) => s.vendor.name).join(" and ")}`,
     },
     ["new"],
@@ -348,7 +351,7 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
     userId: task.userId,
     taskId: task.id,
     kind: "update",
-    body: `New work order at ${short}: ${r.problem} ${lines.join(" ")} Calling ${picks.map((s) => s.vendor.name).join(" and ")} now.`.replace(/\s+/g, " "),
+    body: [`New work order at ${short}: ${r.title}.`, historyLine, passedOver.length ? `${passedOver.map((s) => `${s.vendor.name} no-showed ${s.noShows} time${s.noShows === 1 ? "" : "s"} lately`).join("; ")}, so I'm calling ${names} instead${replace ? ", and asking for a replacement price too" : ""}.` : `Calling ${names} now${replace ? ", and asking for a replacement price too" : ""}.`].filter(Boolean).join(" "),
     dedupeKey: `wo:${task.id}`,
   });
   return true;
@@ -548,7 +551,7 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
   const confirmation = a.confirmationNumbers.at(-1) ?? null;
   const unit = getUnit(ctx.unit)!;
   const rank = (ctx.ranked ?? []).indexOf(vendor.id) + 1 || 1;
-  const window = startsAt ? `${formatWhen(startsAt, tz)}${endsAt ? `-${endsAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz }).replace(":00", "")}` : ""}` : "soon (they'll confirm the time)";
+  const window = startsAt ? windowLabel(startsAt, endsAt, tz) : "soon (they'll confirm the time)";
   const refs = refsOf(ctx, { vendor: vendor.id });
 
   await recordEvent({ id: `evt_booked_${task.id}`, userId: task.userId, taskId: task.id, callId: call.id, type: "vendor.booked", summary: `Booked ${vendor.name}: ${usd(cents)}, ${window}${confirmation ? ` (confirmation ${confirmation})` : ""}`, typed: { trade: ctx.trade, dispatchRank: rank, bookedCents: cents }, refs });
@@ -565,8 +568,8 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
   const tenant = tenantParty(ctx.tenancy)!;
   const hours = startsAt ? Math.max(0, Math.round((startsAt.getTime() - Date.now()) / 3600_000)) : 24;
   const consent = hours < 24; // California: 24 hours' written notice unless the tenant agrees to sooner
-  const problem = (ctx.problem ?? "the repair").replace(/\.$/, "");
-  const notice = `${vendor.name} is coming ${window} to fix this: ${problem.charAt(0).toLowerCase()}${problem.slice(1)}. This is your notice of entry for the repair at ${unit.label}.${consent ? " That's less than 24 hours away, so reply YES if it's OK for them to come in then." : ""}`;
+  const issue = ctx.issue ? ` (${ctx.issue.charAt(0).toLowerCase()}${ctx.issue.slice(1)})` : "";
+  const notice = `${vendor.name} is coming ${window} to fix the problem you reported${issue}. This is your notice of entry for the repair at ${unit.label}.${consent ? " That's less than 24 hours away, so reply YES if it's OK for them to come in then." : ""}`;
   await notifyParty({ party: tenant, taskId: task.id, kind: "notice", body: notice, dedupeKey: `notice:${task.id}` });
   await recordEvent({ id: `evt_notice_${task.id}`, userId: task.userId, taskId: task.id, type: "entry_notice.sent", summary: `Entry notice sent to ${firstName(tenant.name)} (${hours} h ahead)`, data: { text: notice, sentAt: new Date().toISOString() }, typed: { noticePurpose: "repair", noticeHours: hours, noticeMethod: "sms" }, refs: refsOf(ctx) });
 
@@ -652,7 +655,7 @@ export async function closeWorkOrder(task: TaskRow & { context: TaskContext }, f
   if (asset) {
     const prior = await assetHistory(asset.id);
     const last = prior.value.repairs.at(-1);
-    await recordEvent({ id: `evt_repair_${task.id}`, userId: task.userId, taskId: task.id, type: "asset.repaired", summary: `Repaired the ${asset.type.replace(/_/g, " ")} at ${unit.label}: ${usd(cents)}`, typed: { assetType: asset.type, repairCents: cents, repeatWithin90d: Boolean(last && Date.now() - Date.parse(last.at) < 90 * 86_400_000) }, refs: { asset: asset.id, unit: unit.id, owner: ctx.owner } });
+    await recordEvent({ id: `evt_repair_${task.id}`, userId: task.userId, taskId: task.id, type: "asset.repaired", summary: `Repaired the ${assetLabel(asset.type)} at ${unit.label}: ${usd(cents)}`, typed: { assetType: asset.type, repairCents: cents, repeatWithin90d: Boolean(last && Date.now() - Date.parse(last.at) < 90 * 86_400_000) }, refs: { asset: asset.id, unit: unit.id, owner: ctx.owner } });
   }
   // How often the manager had to act on this work order: the "after" number next to the seeded "before".
   const touches = (await db.select({ id: messages.id }).from(messages).where(and(eq(messages.taskId, task.id), eq(messages.direction, "in"), isNull(messages.party)))).length;

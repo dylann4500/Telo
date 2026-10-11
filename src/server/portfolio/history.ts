@@ -4,7 +4,7 @@ import { events } from "../db/schema";
 import type { EntityRefs, Severity, Trade, TypedFacts } from "../domain/types";
 import type { TeloEventType } from "../memory/events";
 import { ASSETS } from "./data";
-import { getAsset, getOwner, getProperty, getUnit, getVendor, unitRefs } from "./index";
+import { assetLabel, getAsset, getOwner, getProperty, getUnit, getVendor, unitRefs } from "./index";
 
 // The portfolio's history before Telo: work orders the manager ran by hand
 // over the past months. It's what Keewano knows on day one, and what changes
@@ -170,7 +170,7 @@ export function portfolioHistoryRows(now = new Date()): Row[] {
 
   // Every asset on file, a few minutes apart, before any work order.
   ASSETS.forEach((a, i) =>
-    push(`asset_${a.id}`, "asset.registered", at(270, 9, i * 3), `On file: ${a.type.replace(/_/g, " ")} at ${getUnit(a.unitId)?.label}, installed ${a.installYear}`, { assetType: a.type, installYear: a.installYear }, { asset: a.id, unit: a.unitId }, null),
+    push(`asset_${a.id}`, "asset.registered", at(270, 9, i * 3), `On file: ${assetLabel(a.type)} at ${getUnit(a.unitId)?.label}, installed ${a.installYear}`, { assetType: a.type, installYear: a.installYear }, { asset: a.id, unit: a.unitId }, null),
   );
 
   for (const w of SEED_WORK_ORDERS) {
@@ -217,11 +217,11 @@ export function portfolioHistoryRows(now = new Date()): Row[] {
     });
     const closeDay = w.done.daysToFix;
     if (w.repairCents && w.asset) {
-      push(id(), "asset.repaired", t(200, closeDay), `Repaired ${getAsset(w.asset)?.type.replace(/_/g, " ")} at ${unit.label}: $${(w.repairCents / 100).toFixed(0)}`, { assetType: getAsset(w.asset)!.type, repairCents: w.repairCents, repeatWithin90d: w.repeat90 ?? false }, { asset: w.asset, unit: w.unit, owner: owner?.id }, task);
+      push(id(), "asset.repaired", t(200, closeDay), `Repaired the ${assetLabel(getAsset(w.asset)!.type)} at ${unit.label}: $${(w.repairCents / 100).toFixed(0)}`, { assetType: getAsset(w.asset)!.type, repairCents: w.repairCents, repeatWithin90d: w.repeat90 ?? false }, { asset: w.asset, unit: w.unit, owner: owner?.id }, task);
     }
     if (w.decision && w.asset) {
       const asset = getAsset(w.asset)!;
-      push(id(), "asset.decision", t(205, closeDay), `${owner?.name} chose to ${w.decision.decision} the ${asset.type.replace(/_/g, " ")} at ${unit.label}`, { decision: w.decision.decision, replaceCents: w.decision.replaceCents, assetAgeYears: now.getFullYear() - asset.installYear }, { asset: asset.id, owner: owner?.id }, task);
+      push(id(), "asset.decision", t(205, closeDay), `${owner?.name} chose to ${w.decision.decision} the ${assetLabel(asset.type)} at ${unit.label}`, { decision: w.decision.decision, replaceCents: w.decision.replaceCents, assetAgeYears: now.getFullYear() - asset.installYear }, { asset: asset.id, owner: owner?.id }, task);
     }
     push(id(), "wo.completed", t(210, closeDay), `Closed: ${w.problem} at ${unit.label} (${w.done.outcome.replace(/_/g, " ")})`, { woOutcome: w.done.outcome, visits: w.visits.length, daysToFix: w.done.daysToFix, invoiceOverQuotePct: w.done.overQuotePct, tenantConfirmed: true, managerTouches: w.done.touches }, { ...base, vendor: vendor.id }, task);
   }
