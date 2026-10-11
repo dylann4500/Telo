@@ -111,6 +111,9 @@ export const config = {
     // One nudge when a question to the user has gone unanswered this long.
     remindAfterHours: Number(env("TELO_REMIND_AFTER_HOURS") ?? "4"),
     staleAfterMinutes: Number(env("TELO_CALL_STALE_MINUTES") ?? "20"),
+    // While a business waits for something only the user has: how long in all, and per wait_for_customer call.
+    liveWaitSeconds: Number(env("TELO_LIVE_WAIT_SECONDS") ?? "90"),
+    livePollSeconds: Number(env("TELO_LIVE_POLL_SECONDS") ?? "15"),
   },
 } as const;
 

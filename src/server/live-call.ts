@@ -41,9 +41,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const digits = (p: string | null | undefined) => p?.replace(/\D/g, "").slice(-10) ?? "";
 
 /** How long a business can be kept waiting for the user's answer, in all. */
-export const liveWaitMs = () => Number(process.env.TELO_LIVE_WAIT_SECONDS ?? "90") * 1000;
+export const liveWaitMs = () => config.calls.liveWaitSeconds * 1000;
 /** One wait_for_customer call: short enough that the agent can say something between them. */
-const pollMs = () => Number(process.env.TELO_LIVE_POLL_SECONDS ?? "15") * 1000;
+const pollMs = () => config.calls.livePollSeconds * 1000;
 
 const WHO = config.user.name.split(" ")[0];
 
