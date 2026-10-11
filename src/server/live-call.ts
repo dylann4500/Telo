@@ -238,12 +238,16 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
   if (FOR_THE_BUSINESS.test(question)) {
     return ok(`That's a question for the person on the phone, not ${name}: just say it to them out loud. ask_customer only texts ${name}.`, { status: "misdirected" });
   }
-  const pending = (await liveQuestions(call)).find((q) => q.status === "open");
+  const pending = (await liveQuestions(call)).find((q) => q.status === "open" && !(q.context as { lapsed?: boolean }).lapsed);
   if (pending) return ok(`You already asked ${name} (${pending.fields[0]?.label ?? "a decision"}). Call wait_for_customer.`, { status: "asked" });
 
   // Something the user already gave Telo for this task: no need to bother them.
   const want = slug(shortLabel(detail, question, call.targetName));
-  const known = !options.length ? task.facts.find((f) => f.source === "user" && (f.key === want || slug(f.label) === want)) : undefined;
+  // Only what this call may share anyway (the brief's list, or non-sensitive facts without one): never another business's details.
+  const allowed = call.brief?.mayDisclose ?? [];
+  const known = !options.length
+    ? task.facts.find((f) => f.source === "user" && (f.key === want || slug(f.label) === want) && (allowed.length ? allowed.includes(f.key) : !f.sensitive))
+    : undefined;
   if (known) return ok(`${name} already gave Telo this. ${known.label}: ${known.value}. Share it if the goal needs it.`, { status: "known", value: known.value });
 
   const decision = options.length >= 2;
@@ -253,7 +257,11 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
     : [{ key: slug(label), label, question, sensitive: /account|member|birth|address|email|phone|policy|license|card|digits/i.test(label), required: true }];
   const choices: ApprovalOption[] = decision ? options.map((label, i) => ({ id: `${slug(label)}_${i + 1}`, label })) : [];
   const id = newId("q");
-  await db.update(questions).set({ status: "cancelled" }).where(and(eq(questions.taskId, task.id), eq(questions.status, "open")));
+  // Replaces this call's earlier question and any question from between calls; a parallel call's live question stays.
+  for (const old of (await listQuestions(task.id)).filter((x) => x.status === "open")) {
+    const c = old.context as { live?: boolean; callId?: string };
+    if (!c.live || c.callId === call.id) await db.update(questions).set({ status: "cancelled" }).where(and(eq(questions.id, old.id), eq(questions.status, "open")));
+  }
   await db.insert(questions).values({
     id,
     userId: user.id,
@@ -288,8 +296,15 @@ async function waitForAnswer({ user, call }: Business): Promise<ToolResult> {
   const name = first(user);
   const q = (await liveQuestions(call))[0];
   if (!q) return ok(`You haven't asked ${name} anything on this call. Use ask_customer first.`, { status: "none" });
-  const askedAt = Date.parse(String((q.context as { askedAt?: string }).askedAt ?? q.createdAt.toISOString()));
+  const ctx = q.context as { askedAt?: string; lapsed?: boolean };
+  const askedAt = Date.parse(String(ctx.askedAt ?? q.createdAt.toISOString()));
   const giveUpAt = askedAt + liveWaitMs();
+  const wrapUp = (waited: number) =>
+    ok(
+      `${name} hasn't answered (${waited} seconds). Don't keep them waiting. Say: "I'm sorry, I can't reach ${name} right now. I'll get that and call you back." Then ask when is best and for a reference number, and end the call. If the goal doesn't need it, carry on without it.`,
+      { status: "timeout" },
+    );
+  if (q.status === "open" && ctx.lapsed) return wrapUp(Math.round((Date.now() - askedAt) / 1000)); // already told to wrap up
   const until = Math.min(Date.now() + pollMs(), giveUpAt);
   let fresh: QuestionRow | undefined = q;
   for (;;) {
@@ -298,15 +313,15 @@ async function waitForAnswer({ user, call }: Business): Promise<ToolResult> {
     await sleep(400);
   }
   if (fresh?.status === "answered") return answered(user, fresh);
+  if (fresh?.status === "cancelled" && !(fresh.answer as { declined?: boolean } | null)?.declined) return wrapUp(Math.round((Date.now() - askedAt) / 1000));
   if (fresh?.status === "cancelled") {
     return ok(`${name} would rather not share that right now. Carry on without it if you can; otherwise say: "${name} will follow up with you on that." Ask for a reference number, and end the call politely.`, { status: "declined" });
   }
   const waited = Math.round((Date.now() - askedAt) / 1000);
   if (Date.now() >= giveUpAt) {
-    return ok(
-      `${name} hasn't answered (${waited} seconds). Don't keep them waiting. Say: "I'm sorry, I can't reach ${name} right now. I'll get that and call you back." Then ask when is best and for a reference number, and end the call. If the goal doesn't need it, carry on without it.`,
-      { status: "timeout" },
-    );
+    // From here an answer is for the callback, not this call (the user is told so).
+    await lapse(q);
+    return wrapUp(waited);
   }
   const line = waited < 25 ? `Thanks for bearing with me, ${name}'s just getting that.` : `Still with me? I'm still waiting to hear back from ${name}.`;
   return ok(`No answer yet (${waited} seconds). Say: "${line}" Then call wait_for_customer again.`, { status: "waiting", waited });
@@ -390,6 +405,18 @@ async function checkCalendar({ user, call, task }: Business, args: Record<string
     `${name} is busy ${when}, so don't take it. ${nearby ? `${name} is free: ${nearby}. Ask for one of those times instead.` : `No free time in the next three days; ask what else they have.`}`,
     { status: "busy", nearby },
   );
+}
+
+async function lapse(q: QuestionRow) {
+  await db
+    .update(questions)
+    .set({ context: { ...(q.context as object), lapsed: true } })
+    .where(and(eq(questions.id, q.id), eq(questions.status, "open")));
+}
+
+/** A business call hung up: its open questions now wait for the callback (an answer is kept, but not "given on the call"). */
+export async function lapseLiveQuestions(call: CallRow): Promise<void> {
+  for (const q of await liveQuestions(call)) if (q.status === "open") await lapse(q);
 }
 
 /** A business call ended: any question still waiting on the user from it lapses (review asks again if it's still needed). */

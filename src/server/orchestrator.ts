@@ -985,8 +985,11 @@ async function answeredDuringCall(task: TaskRow, call: CallRow): Promise<{ quest
   const asked = (await listQuestions(task.id)).filter((q) => (q.context as { callId?: string; live?: boolean }).live && (q.context as { callId?: string }).callId === call.id);
   const out: { question: string; answer: string; detail: string | null }[] = [];
   for (const q of asked) {
-    const a = (q.answer ?? {}) as { keys?: string[]; optionId?: string | null; approve?: boolean; note?: string | null; declined?: boolean };
-    if (q.status === "answered" && q.kind === "approval") {
+    const a = (q.answer ?? {}) as { keys?: string[]; optionId?: string | null; approve?: boolean; note?: string | null; declined?: boolean; late?: boolean };
+    if (q.status === "answered" && a.late) {
+      // Came after the agent wrapped up: it never reached the business. It's in the facts (or followUp) for the callback.
+      out.push({ question: q.prompt, answer: "Answered after the call ended (not given to them; use it on the callback)", detail: null });
+    } else if (q.status === "answered" && q.kind === "approval") {
       const label = q.options.find((o) => o.id === a.optionId)?.label ?? (a.approve === false ? "No" : "Yes");
       out.push({ question: q.prompt, answer: `Decided: ${label}${a.note ? ` (${a.note})` : ""}`, detail: null });
     } else if (q.status === "answered") {

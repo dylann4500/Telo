@@ -11,7 +11,7 @@ import { advance, cancelTask, normalizePhone, phoneTarget, wakeTask } from "./or
 import { containsSecret, maskSecrets } from "./redact";
 import { formatWhen, nowContext } from "./time";
 import { answerStatus } from "./status";
-import { getCall, getTask, getUser, getUserByPhone, listActiveTasks, listRecentTasks, openLiveQuestion, openQuestion, patchTask, recentMessages, transitionTask } from "./tasks/repo";
+import { callIsLive, getCall, getTask, getUser, getUserByPhone, listActiveTasks, listRecentTasks, openLiveQuestion, openQuestion, patchTask, recentMessages, transitionTask } from "./tasks/repo";
 
 // Everything the user sends Telo (a text, a web chat message, a live voice
 // call through Dial's agent, or the transcript of a call) comes through
@@ -160,10 +160,8 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       const task = live ?? find("needs_info");
       if (task?.status === "calling") {
         const q = await openLiveQuestion(task.id);
-        if (q?.kind === "info") {
-          await answerLive(user, task, q, action.answers, reply);
-          return;
-        }
+        // false: the answer wasn't for this question; the usual path below takes it.
+        if (q?.kind === "info" && (await answerLive(user, task, q, action.answers, reply, Boolean(action.taskId)))) return;
       }
       if (!task || task.status !== "needs_info") {
         await nothingToDo("Thanks. I'm not waiting on anything from you right now.");
@@ -310,19 +308,43 @@ async function liveTask(active: TaskRow[], kind: "info" | "approval"): Promise<T
 }
 
 /** The user's answer to a question Telo asked while a business waits: wait_for_customer picks it up from the task's facts. */
-async function answerLive(user: UserRow, task: TaskRow, q: QuestionRow, answers: { key: string; value: string }[], reply: (body: string, taskId?: string) => Promise<void>) {
-  const target = String((q.context as { target?: string }).target ?? task.targets[0]?.name ?? "them");
-  const incoming: Fact[] = answers
-    .filter((a) => a.value?.trim())
-    .map((a) => {
-      const f = q.fields.find((x) => x.key === a.key) ?? (q.fields.length === 1 ? q.fields[0] : undefined);
-      const key = f?.key ?? a.key;
-      return { key, label: f?.label ?? key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), value: a.value.trim(), sensitive: f?.sensitive ?? /account|member|birth|email|address|ssn|card/i.test(key), source: "user" as const };
-    });
-  if (!incoming.length) {
-    await reply(`Sorry, I didn't catch that. ${q.prompt}`, task.id);
-    return;
+async function answerLive(
+  user: UserRow,
+  task: TaskRow,
+  q: QuestionRow,
+  answers: { key: string; value: string }[],
+  reply: (body: string, taskId?: string) => Promise<void>,
+  named: boolean, // the router named this task, so a differently keyed answer is still for it
+): Promise<boolean> {
+  const ctx = q.context as { target?: string; callId?: string; lapsed?: boolean };
+  const target = String(ctx.target ?? task.targets[0]?.name ?? "them");
+  const given = answers.filter((a) => a.value?.trim());
+  const field = q.fields[0];
+  const words = (k: string) => new Set(k.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+  const overlaps = (a: string, b: string) => [...words(a)].some((w) => words(b).has(w));
+  // An answer under another key belongs to this question only if it's plainly the same detail (or the router named this task).
+  const forThis = (a: { key: string }) => !field || a.key === field.key || (given.length === 1 && (named || /^(answer|value|detail|response|info)$/i.test(a.key) || overlaps(a.key, field.key)));
+  const mine = given.filter(forThis);
+  if (!mine.length) {
+    if (!given.length) {
+      await reply(`Sorry, I didn't catch that. ${q.prompt}`, task.id);
+      return true;
+    }
+    return false;
   }
+  const incoming: Fact[] = mine.map((a) => {
+    const f = field && forThis(a) ? field : undefined;
+    const key = f?.key ?? a.key;
+    return { key, label: f?.label ?? key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), value: a.value.trim(), sensitive: f?.sensitive ?? /account|member|birth|email|address|ssn|card/i.test(key), source: "user" as const };
+  });
+  // Still on the line? After the agent wrapped up (or the call ended), it's for the callback instead.
+  const onLine = !ctx.lapsed && (await callIsLive(ctx.callId));
+  const claimed = await db
+    .update(questions)
+    .set({ status: "answered", answeredAt: new Date(), answer: { keys: incoming.map((f) => f.key), live: onLine, late: !onLine } })
+    .where(and(eq(questions.id, q.id), eq(questions.status, "open")))
+    .returning();
+  if (!claimed.length) return false;
   const fresh = (await getTask(task.id)) ?? task;
   const facts = [...fresh.facts];
   for (const f of incoming) {
@@ -330,16 +352,10 @@ async function answerLive(user: UserRow, task: TaskRow, q: QuestionRow, answers:
     if (i >= 0) facts[i] = f;
     else facts.push(f);
   }
-  await patchTask(task.id, { facts });
-  const claimed = await db
-    .update(questions)
-    .set({ status: "answered", answeredAt: new Date(), answer: { keys: incoming.map((f) => f.key), live: true } })
-    .where(and(eq(questions.id, q.id), eq(questions.status, "open")))
-    .returning();
-  if (!claimed.length) return;
-  await patchTask(task.id, { statusDetail: `On the phone with ${target}` }, ["calling"]);
-  await recordEvent({ userId: user.id, taskId: task.id, orgKey: task.orgKey, type: "task.info_received", summary: `You told me during the call: ${incoming.map((f) => f.label).join(", ")}`, data: { live: true } });
-  await reply(`Thanks. Telling ${target} now.`, task.id);
+  await patchTask(task.id, { facts, ...(onLine ? { statusDetail: `On the phone with ${target}` } : {}) });
+  await recordEvent({ userId: user.id, taskId: task.id, orgKey: task.orgKey, type: "task.info_received", summary: `You told me ${onLine ? "during" : "after"} the call: ${incoming.map((f) => f.label).join(", ")}`, data: { live: onLine } });
+  await reply(onLine ? `Thanks. Telling ${target} now.` : `Thanks. They'd already hung up, so I'll call ${target} back with that.`, task.id);
+  return true;
 }
 
 /** A decision the user made while the business waits on the line (by text, by voice, or a dashboard tap). */
@@ -349,24 +365,29 @@ export async function decideLive(user: UserRow, taskId: string, optionId: string
   if (!task || !q || q.kind !== "approval") return false;
   const option = q.options.find((o) => o.id === optionId) ?? (optionId ? undefined : approve ? q.options[0] : undefined);
   const decision = [option?.label ?? (approve ? "Yes" : "No"), note].filter(Boolean).join(". ");
+  const ctx = q.context as { target?: string; callId?: string; lapsed?: boolean };
+  const onLine = !ctx.lapsed && (await callIsLive(ctx.callId));
   const claimed = await db
     .update(questions)
-    .set({ status: "answered", answeredAt: new Date(), answer: { optionId: option?.id ?? null, approve, note, live: true } })
+    .set({ status: "answered", answeredAt: new Date(), answer: { optionId: option?.id ?? null, approve, note, live: onLine, late: !onLine } })
     .where(and(eq(questions.id, q.id), eq(questions.status, "open")))
     .returning();
   if (!claimed.length) return false;
-  const target = String((q.context as { target?: string }).target ?? task.targets[0]?.name ?? "them");
-  // decide reads this after the call, so the review knows the user already chose.
-  await patchTask(task.id, { followUp: { reason: "user_decision", userDecision: `${decision} (decided during the call)`, callback: null }, statusDetail: `On the phone with ${target}` });
+  const target = String(ctx.target ?? task.targets[0]?.name ?? "them");
+  // decide reads this after the call. Given in time, the agent acted on it; too late, it's for the callback.
+  await patchTask(task.id, {
+    followUp: { reason: "user_decision", userDecision: onLine ? `${decision} (decided during the call)` : decision, callback: null },
+    ...(onLine ? { statusDetail: `On the phone with ${target}` } : {}),
+  });
   await recordEvent({
     userId: user.id,
     taskId: task.id,
     orgKey: task.orgKey,
     type: approve ? "approval.granted" : "approval.denied",
-    summary: `You decided during the call: ${decision}`,
+    summary: `You decided ${onLine ? "during" : "after"} the call: ${decision}`,
     typed: { approvalKind: "decision" },
   });
-  await notify({ userId: user.id, taskId: task.id, kind: "reply", body: `Got it. Telling ${target} now.`, channel });
+  await notify({ userId: user.id, taskId: task.id, kind: "reply", body: onLine ? `Got it. Telling ${target} now.` : `Got it. They'd already hung up, so I'll call ${target} back with that.`, channel });
   return true;
 }
 

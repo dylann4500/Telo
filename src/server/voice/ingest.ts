@@ -172,6 +172,11 @@ async function onCallEnded(e: Extract<VoiceEvent, { kind: "call.ended" }>) {
   // transcriptAvailable=false at hang-up even when the transcript follows a
   // second later, so it can't be trusted here. The background loop finishes
   // the call anyway if the transcript never comes.
+  // Answers from here on are for a callback: the agent has hung up (the transcript may still be minutes away).
+  if (call.kind === "business" && call.taskId) {
+    const { lapseLiveQuestions } = await import("../live-call");
+    await lapseLiveQuestions(call);
+  }
   const connected = Boolean(call.answeredAt) || (e.durationSec ?? 0) > 0;
   if (status !== "ended" || !connected) await finishCall(call.id);
 }

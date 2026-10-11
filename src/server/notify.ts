@@ -109,7 +109,7 @@ export async function notify(input: {
 /** Stores one outbound message and delivers it on `channel`. False if the dedupe key was already used. */
 async function deliver(
   user: UserRow,
-  input: { taskId?: string | null; kind: MessageKind },
+  input: { taskId?: string | null; kind: MessageKind; urgent?: boolean },
   body: string,
   channel: Channel,
   dedupeKey: string | null,
@@ -139,8 +139,8 @@ async function deliver(
     if (live) {
       live.lines.push(body);
     } else if (channel === "voice") {
-      // Calling the user is reserved for things that need them.
-      if (CALL_WORTHY.includes(input.kind)) await callUser(user, input.taskId ?? null, body);
+      // Calling the user is reserved for things that need them, and the same checks apply on a voice-only setup.
+      if (CALL_WORTHY.includes(input.kind) && (await mayCall(user, Boolean(input.urgent)))) await callUser(user, input.taskId ?? null, body);
     } else if (channel !== "web") {
       if (!user.phone) throw new Error("No phone number on file (set TELO_USER_PHONE)");
       const res = await getVoice().sendMessage({ to: user.phone, body, channel: channel as MessageChannel });

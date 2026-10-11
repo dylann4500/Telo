@@ -19,7 +19,8 @@ export function redactFact(f: Fact): Fact {
 }
 
 // Never asked of the user, by text or mid-call, whatever a business says it needs.
-export const SECRET_FIELD = /password|passcode|\bpin\b|security (code|answer|question)|social security|\bssn\b|\bcvv\b|\bcvc\b|(full|entire|whole) (credit |debit )?card number/i;
+// One-time codes too: "what's the code we just texted you?" is how accounts get taken over.
+export const SECRET_FIELD = /password|passcode|\bpin\b|security (code|answer|question)|social security|\bssn\b|\bcvv\b|\bcvc\b|(full|entire|whole) (credit |debit )?card number|verification code|one[- ]time (pass)?(code|password)|\botp\b|\b2fa\b|two[- ]factor|code (we|i|they) (just )?(sent|texted|emailed)/i;
 
 // Never stored, never used on a call.
 const HARD_SECRETS: RegExp[] = [

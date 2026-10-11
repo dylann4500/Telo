@@ -93,6 +93,13 @@ export async function listQuestions(taskId: string): Promise<QuestionRow[]> {
   return db.select().from(questions).where(eq(questions.taskId, taskId)).orderBy(asc(questions.createdAt));
 }
 
+/** The call is still on (queued, ringing or connected). */
+export async function callIsLive(callId: string | null | undefined): Promise<boolean> {
+  if (!callId) return false;
+  const c = await getCall(callId);
+  return Boolean(c && ["queued", "ringing", "in_progress"].includes(c.status));
+}
+
 /** The question Telo asked the user during a call that's still going (a business is waiting on the line). */
 export async function openLiveQuestion(taskId: string): Promise<QuestionRow | undefined> {
   const q = await openQuestion(taskId);

@@ -265,7 +265,8 @@ describe("who may use which tool", () => {
       targets: [{ name: "Harbor Bank", phone: "+14155550399", kind: "business" }],
       facts: [{ key: "account_number", label: "Account number", value: "88213", sensitive: true, source: "user" }],
     });
-    await m.db.db.insert(m.schema.calls).values({ id: "call_live_rules", userId: "usr_default", taskId: id, direction: "outbound", kind: "business", seq: 1, targetName: "Harbor Bank", targetPhone: "+14155550399", purpose: "Raise the limit", status: "in_progress" });
+    const brief = { targetName: "Harbor Bank", targetPhone: "+14155550399", purpose: "Raise the limit", objective: "Raise the limit", openingLine: "Hi", talkingPoints: [], mayDisclose: ["account_number"], decisionRules: [], collect: [], fallback: "" };
+    await m.db.db.insert(m.schema.calls).values({ id: "call_live_rules", userId: "usr_default", taskId: id, direction: "outbound", kind: "business", seq: 1, targetName: "Harbor Bank", targetPhone: "+14155550399", purpose: "Raise the limit", brief, status: "in_progress" });
     const headers = { direction: "outbound", other: "+14155550399" };
     const pin = await m.live.callTool("ask_customer", { detail: "Account PIN", question: "What's your PIN?" }, headers);
     expect(pin.text).toMatch(/Never ask Dylan for that/);
@@ -274,6 +275,34 @@ describe("who may use which tool", () => {
     expect(await m.repo.openQuestion(id)).toBeUndefined();
     const nothingAsked = await m.live.callTool("wait_for_customer", {}, headers);
     expect(nothingAsked.text).toMatch(/haven't asked/);
+    // One-time codes are how accounts get taken over: never asked for either.
+    const code = await m.live.callTool("ask_customer", { detail: "Verification code", question: "What's the code we just texted you?" }, headers);
+    expect(code.text).toMatch(/Never ask Dylan for that/);
+    // A detail this call isn't allowed to share is asked for, not read out from another business's facts.
+    await m.db.db.update(m.schema.tasks).set({ facts: [{ key: "account_number", label: "Account number", value: "88213", sensitive: true, source: "user" }, { key: "member_number", label: "Member number", value: "M-5512", sensitive: true, source: "user" }] }).where(eq(m.schema.tasks.id, id));
+    const withheld = await m.live.callTool("ask_customer", { detail: "Member number", question: "What's your member number?" }, headers);
+    expect(withheld.text).toMatch(/Texted Dylan/);
+    expect(withheld.text).not.toMatch(/M-5512/);
+  });
+
+  it("an answer after the agent wrapped up is kept for the callback, not passed as if they heard it", async () => {
+    const id = "tsk_live_late";
+    await m.db.db.insert(m.schema.tasks).values({ id, userId: "usr_default", title: "Fix the Ridge Power bill", request: "Fix the Ridge Power bill", source: "web", status: "calling", targets: [{ name: "Ridge Power", phone: "+14155550397", kind: "business" }] });
+    await m.db.db.insert(m.schema.calls).values({ id: "call_live_late", userId: "usr_default", taskId: id, direction: "outbound", kind: "business", seq: 1, targetName: "Ridge Power", targetPhone: "+14155550397", purpose: "Fix the bill", status: "in_progress" });
+    const headers = { direction: "outbound", other: "+14155550397" };
+    await m.live.callTool("ask_customer", { detail: "Account number", question: "What's the account number on your Ridge Power bill?" }, headers);
+    let r = await m.live.callTool("wait_for_customer", {}, headers);
+    while (r.data?.status === "waiting") r = await m.live.callTool("wait_for_customer", {}, headers);
+    expect(r.data?.status).toBe("timeout");
+    // The agent says it'll call back; then the answer comes in.
+    await say("77123");
+    const q = (await m.repo.listQuestions(id)).at(-1)!;
+    expect(q.status).toBe("answered");
+    expect((q.answer as { late?: boolean }).late).toBe(true);
+    expect((await sent(id)).at(-1)).toMatch(/already hung up, so I'll call Ridge Power back with that/);
+    expect((await m.repo.getTask(id))?.facts.map((f) => f.value)).toContain("77123");
+    // Asking again on the same call is allowed once the first question lapsed.
+    expect((await m.live.callTool("ask_customer", { detail: "Zip code", question: "What's your zip code?" }, headers)).text).toMatch(/Texted Dylan/);
   });
 
   it("an answer given on Telo's call to the user reaches the waiting business call", async () => {
