@@ -41,21 +41,15 @@ async function channelFor(user: UserRow, taskId: string | null | undefined): Pro
   return user.channel;
 }
 
-/** The user is on the phone with Telo right now (calling in, or being called). */
-async function onCallWithTelo(userId: string): Promise<boolean> {
+const digitsOf = (p: string | null | undefined) => p?.replace(/\D/g, "").slice(-10) ?? "";
+
+/** The user's phone is busy: they're on with Telo (calling in, or being called), or it's the phone playing the business in a solo test. */
+async function lineBusy(user: UserRow): Promise<boolean> {
   const live = await db
-    .select({ id: calls.id })
+    .select({ kind: calls.kind, targetPhone: calls.targetPhone })
     .from(calls)
-    .where(
-      and(
-        eq(calls.userId, userId),
-        inArray(calls.kind, ["user_inbound", "user_update"]),
-        inArray(calls.status, ["queued", "ringing", "in_progress"]),
-        gte(calls.createdAt, new Date(Date.now() - 30 * 60_000)),
-      ),
-    )
-    .limit(1);
-  return live.length > 0;
+    .where(and(eq(calls.userId, user.id), inArray(calls.status, ["queued", "ringing", "in_progress"]), gte(calls.createdAt, new Date(Date.now() - 30 * 60_000))));
+  return live.some((c) => c.kind === "user_inbound" || c.kind === "user_update" || (user.phone && digitsOf(c.targetPhone) === digitsOf(user.phone)));
 }
 
 /** The user texted or called Telo recently, so a late-night call is about something they're waiting on. */
@@ -78,7 +72,7 @@ async function recentlyActive(userId: string, ms: number): Promise<boolean> {
 /** Whether Telo may ring the user now: waking hours, a business waiting on the line, or they're up talking to Telo. */
 async function mayCall(user: UserRow, urgent: boolean): Promise<boolean> {
   if (!user.phone) return false;
-  if (await onCallWithTelo(user.id)) return false; // their line is busy with Telo; the text and the dashboard have it
+  if (await lineBusy(user)) return false; // their line is busy; the text and the dashboard have it
   if (urgent || withinCallingHours(new Date(), user.timezone)) return true;
   return recentlyActive(user.id, 2 * 3600_000);
 }
@@ -200,6 +194,12 @@ async function callUser(user: UserRow, taskId: string | null, body: string) {
     provider: getVoice().name,
     startedAt: new Date(),
   });
-  const res = await getVoice().placeCall({ callId: id, to: user.phone, instructions, idempotencyKey: `telo:${id}` });
-  await db.update(calls).set({ providerCallId: res.providerCallId }).where(eq(calls.id, id));
+  try {
+    const res = await getVoice().placeCall({ callId: id, to: user.phone, instructions, idempotencyKey: `telo:${id}` });
+    await db.update(calls).set({ providerCallId: res.providerCallId }).where(eq(calls.id, id));
+  } catch (err) {
+    // Not left "queued": that would read as the user's line being busy for half an hour.
+    await db.update(calls).set({ status: "failed", endReason: "failed_to_place", statusDetail: (err as Error).message.slice(0, 200), endedAt: new Date(), finishedAt: new Date() }).where(eq(calls.id, id));
+    throw err;
+  }
 }
