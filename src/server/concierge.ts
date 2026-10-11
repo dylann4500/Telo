@@ -29,6 +29,19 @@ function asChannel(raw: string): Channel {
 export async function handleInboundText(input: { from: string; body: string; channel: string; providerMessageId: string }) {
   const user = await getUserByPhone(input.from);
   if (!user) {
+    const { tryPair } = await import("./pairing");
+    if (await tryPair(input.from, input.body)) {
+      const owner = await getUserByPhone(input.from);
+      if (owner) {
+        await notify({
+          userId: owner.id,
+          kind: "reply",
+          body: "You're linked. Text me anything that needs a phone call, or call this number.",
+          channel: asChannel(input.channel),
+        });
+      }
+      return;
+    }
     console.warn("[concierge] ignoring a text from an unknown number");
     return;
   }

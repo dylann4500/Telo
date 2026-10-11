@@ -3,6 +3,7 @@ import type { CallDTO, LiveCallDTO, MessageDTO, QuestionDTO, StateDTO, TaskDetai
 import { config } from "./config";
 import { db } from "./db/client";
 import { calls, events, messages, questions, tasks, type CallRow, type QuestionRow, type TaskRow } from "./db/schema";
+import { pairingCode } from "./pairing";
 import { redactFact } from "./redact";
 import { getUser } from "./tasks/repo";
 
@@ -69,6 +70,7 @@ export async function buildState(userId: string): Promise<StateDTO> {
     ),
     messages: msgRows.reverse().map(messageDTO),
     liveUserCall: userCall && ["ringing", "in_progress"].includes(userCall.status) ? liveCall(userCall) : null,
+    pairingCode: config.voice.provider === "dial" && config.voice.teloPhone ? await pairingCode() : null,
   };
 }
 

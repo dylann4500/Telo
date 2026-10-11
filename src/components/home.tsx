@@ -53,6 +53,13 @@ export function Home() {
               <span>Your thread with Telo, as it looks on your phone</span>
             )}
           </div>
+          {data?.pairingCode && teloPhone && (
+            <div className="mb-2 rounded-2xl border border-im-blue/30 bg-im-blue/10 px-4 py-3 text-[13.5px]">
+              <div className="font-semibold">Link your phone</div>
+              From your phone, text <span className="rounded bg-surface px-1.5 py-0.5 font-mono font-semibold">LINK {data.pairingCode}</span> to{" "}
+              <span className="font-medium">{teloPhone}</span>. After that, texts and calls from your number reach Telo as you.
+            </div>
+          )}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[30px] border border-line bg-im-bg shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
             <Thread
               messages={data?.messages ?? []}

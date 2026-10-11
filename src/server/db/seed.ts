@@ -43,7 +43,11 @@ export async function seedBaseline() {
   await db
     .insert(users)
     .values({ id: u.id, name: u.name, phone: u.phone, channel: u.channel, timezone: u.timezone })
-    .onConflictDoUpdate({ target: users.id, set: { name: u.name, phone: u.phone, channel: u.channel, timezone: u.timezone } });
+    .onConflictDoUpdate({
+      target: users.id,
+      // Keep a phone linked by text when TELO_USER_PHONE is unset.
+      set: { name: u.name, channel: u.channel, timezone: u.timezone, ...(u.phone ? { phone: u.phone } : {}) },
+    });
   for (const d of directory()) {
     await db
       .insert(organizations)

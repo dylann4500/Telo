@@ -75,6 +75,8 @@ export interface StateDTO {
   tasks: TaskSummaryDTO[];
   messages: MessageDTO[];
   liveUserCall: LiveCallDTO | null;
+  /** Shown until the user's phone is linked: text "LINK <code>" to Telo's number. */
+  pairingCode: string | null;
 }
 
 export interface TurnDTO {
