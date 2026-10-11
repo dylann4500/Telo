@@ -210,6 +210,11 @@ export async function callTool(name: string, args: Record<string, unknown>, head
     if (name === "get_status") return ok(await statusDigest(caller.user.id));
     const message = str(args.message);
     if (!message) return err("Pass what they said in `message`.");
+    // On Telo's update call the agent sometimes relays the update itself: nothing the user said.
+    const plain = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (caller.call?.kind === "user_update" && plain(caller.call.instructions ?? "").includes(plain(message).slice(0, 60))) {
+      return ok(`That's your own update, not something ${first(caller.user)} said. If they have nothing to add, say goodbye and end the call.`, { status: "own_line" });
+    }
     return ok(await askTeloByVoice(caller.user, message));
   }
   if (caller?.kind !== "business") return err("Only available while Telo is on a call with a business.");

@@ -5,6 +5,7 @@ import { ArrowUp, Mail, MessageSquare, Phone } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { MessageDTO, StateDTO, TaskSummaryDTO } from "@/lib/types";
 import { post } from "./api";
+import { useNow } from "./ui";
 
 // The conversation with Telo, drawn like the Messages app: this is the same
 // thread the user has on their phone when they text Telo's number. Messages
@@ -71,7 +72,12 @@ export function Thread({
     if (m.direction === "out" && m.taskId && waiting.has(m.taskId) && (m.kind === "approval" || m.kind === "question")) lastAsk.set(m.taskId, i);
   });
   const lastMine = visible.findLastIndex((m) => m.direction === "in" && m.kind !== "call" && !m.party);
-  const thinking = messages.at(-1)?.direction === "in";
+  // Typing only right after something the manager sent that Telo answers: not after a call's transcript, a
+  // tenant's or vendor's message, or once a reply would have come long ago.
+  const newest = messages.at(-1);
+  const awaitingReply = Boolean(newest && newest.direction === "in" && newest.kind !== "call" && !newest.party);
+  const now = useNow(awaitingReply);
+  const thinking = awaitingReply && now - Date.parse(newest!.createdAt) < 60_000;
   const smsThread = messages.filter((m) => m.direction === "in").at(-1)?.channel === "sms";
 
   async function send(text: string) {

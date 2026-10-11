@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, like, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, like, ne, sql } from "drizzle-orm";
 import * as agent from "./agent";
 import type { TriageResult } from "./agent/schemas";
 import { config } from "./config";
@@ -993,7 +993,8 @@ export async function closeWorkOrder(task: TaskRow & { context: TaskContext }, f
     await recordEvent({ id: `evt_repair_${key}`, userId: task.userId, taskId: task.id, type: "asset.repaired", summary: `Repaired the ${assetLabel(asset.type)} at ${unit.label}: ${usd(cents)}`, typed: { assetType: asset.type, repairCents: cents, repeatWithin90d: Boolean(last && Date.now() - Date.parse(last.at) < 90 * 86_400_000) }, refs: { asset: asset.id, unit: unit.id, owner: ctx.owner } });
   }
   // How often the manager had to act on this work order: the "after" number next to the seeded "before".
-  const touches = (await db.select({ id: messages.id }).from(messages).where(and(eq(messages.taskId, task.id), eq(messages.direction, "in"), isNull(messages.party)))).length;
+  // What the manager sent or decided; Telo's update calls to them (their transcripts) aren't touches.
+  const touches = (await db.select({ id: messages.id }).from(messages).where(and(eq(messages.taskId, task.id), eq(messages.direction, "in"), isNull(messages.party), ne(messages.kind, "call")))).length;
   await recordEvent({
     id: `evt_done_${task.id}`,
     userId: task.userId,
