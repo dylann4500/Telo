@@ -583,7 +583,8 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
   const tenant = tenantParty(ctx.tenancy)!;
   const hours = startsAt ? Math.max(0, Math.round((startsAt.getTime() - Date.now()) / 3600_000)) : 24;
   const consent = hours < 24; // California: 24 hours' written notice unless the tenant agrees to sooner
-  const issue = ctx.issue ? ` (${ctx.issue.charAt(0).toLowerCase()}${ctx.issue.slice(1)})` : "";
+  // "AC not cooling" keeps its capitals; "Leak under the sink" reads "leak under the sink".
+  const issue = ctx.issue ? ` (${/^[A-Z]{2}/.test(ctx.issue) ? ctx.issue : ctx.issue.charAt(0).toLowerCase() + ctx.issue.slice(1)})` : "";
   const notice = `${vendor.name} is coming ${window} to fix the problem you reported${issue}. This is your notice of entry for the repair at ${unit.label}.${consent ? " That's less than 24 hours away, so reply YES if it's OK for them to come in then." : ""}`;
   await notifyParty({ party: tenant, taskId: task.id, kind: "notice", body: notice, dedupeKey: `notice:${task.id}` });
   await recordEvent({ id: `evt_notice_${task.id}`, userId: task.userId, taskId: task.id, type: "entry_notice.sent", summary: `Entry notice sent to ${firstName(tenant.name)} (${hours} h ahead)`, data: { text: notice, sentAt: new Date().toISOString() }, typed: { noticePurpose: "repair", noticeHours: hours, noticeMethod: "sms" }, refs: refsOf(ctx) });
