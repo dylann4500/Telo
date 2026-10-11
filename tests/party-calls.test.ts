@@ -36,11 +36,11 @@ let m: {
 
 const telo = (text: string): SimTurn => ({ speaker: "agent", text });
 const them = (text: string): SimTurn => ({ speaker: "other", text });
-const answers = (said: string): SimTurn[] => [
+const answers = (said: string, relayed = said): SimTurn[] => [
   them("Hello?"),
   telo("Hi, this is Telo, the AI assistant for Bayside Property Management. This call is recorded."),
   them(said),
-  { speaker: "agent", text: "One sec.", tool: { name: "ask_telo", args: { message: said } } },
+  { speaker: "agent", text: "One sec.", tool: { name: "ask_telo", args: { message: relayed } } },
   telo("Thanks, bye."),
 ];
 
@@ -54,7 +54,15 @@ beforeAll(async () => {
   };
   const { SCENARIOS } = await import("../src/server/voice/mock-scenarios");
   SCENARIOS.unshift({ match: /priya shah/i, persona: () => answers("Yes, approve it. And get a replacement quote too."), script: () => "no_answer" });
-  SCENARIOS.unshift({ match: /maria gomez/i, persona: (n) => answers(n === 1 ? "Yes, that works for me." : "Yes, it's fixed. Thanks!"), script: () => "no_answer" });
+  // Relayed the way Dial's agent did on the live run: reported speech, not her words.
+  SCENARIOS.unshift({
+    match: /maria gomez/i,
+    persona: (n) =>
+      n === 1
+        ? answers("Yes. That works for me.", "Maria said: Yes, that works for me for Rapid Air Heating & Cooling to come tonight between 8 and 9 PM.")
+        : answers("They came by and fixed the air conditioning, so yes.", "Maria said: 'They came by and fixed the air conditioning, so yes.'"),
+    script: () => "no_answer",
+  });
   SCENARIOS.unshift({ match: /aisha rahman/i, persona: () => answers("Okay, I'm getting out now."), script: () => "no_answer" });
   await m.db.ensureDb();
   await (await import("../src/server/portfolio/history")).seedPortfolioHistory();

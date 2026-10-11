@@ -37,6 +37,10 @@ const dialable = (phone: string): string | null => (config.voice.provider === "m
 const usd = (cents: number) => `$${Math.round(cents / 100).toLocaleString("en-US")}`;
 const YES = /^\s*(y|yes|yeah|yep|yup|ok|okay|sure|confirm(ed)?|correct|fixed|all good|works?( now)?|it'?s (fixed|working|good))\b/i;
 const NO = /^\s*(n|no|nope|not (yet|fixed|really)|still (broken|not)|didn'?t|doesn'?t|it'?s not)\b/i;
+// A spoken answer, relayed by the call's agent, says yes or no somewhere in a sentence.
+const SAYS_YES = /\b(y|yes|yeah|yep|yup|sure|ok(ay)?|correct|confirm(ed)?|fixed|working|works|all good|it'?s good|resolved)\b/i;
+const SAYS_NO = /\b(no|nope|not (yet|fixed|working|really|ok(ay)?)|still (broken|not|out|leaking|warm|hot)|didn'?t (fix|work|come)|doesn'?t work|isn'?t (fixed|working)|it'?s not)\b/i;
+const yesNo = (body: string, voice: boolean) => (voice ? { yes: SAYS_YES.test(body), no: SAYS_NO.test(body) } : { yes: YES.test(body), no: NO.test(body) });
 const NO_SHOW = /\b(never (came|showed|arrived)|didn'?t (come|show|arrive)|did not (come|show|arrive)|no ?one (came|showed)|nobody (came|showed|ever)|no[- ]show|hasn'?t (come|shown|arrived)|not here yet|still waiting)\b/i;
 
 function refsOf(ctx: TaskContext, extra: EntityRefs = {}): EntityRefs {
@@ -163,7 +167,7 @@ async function callParty(input: { party: Party; taskId: string | null; body: str
   const instructions = [
     `You are Telo, the AI assistant for ${FIRM.name}, a property management company. You are making a phone call to ${input.party.name} on behalf of ${FIRM.name}. ${first} is ${who}, and you have a short message about a repair.`,
     `Start with: "Hi ${first}, this is Telo, the AI assistant for ${FIRM.name}. This call is recorded." Then say this, naturally and briefly: "${input.body}"`,
-    `If it asks them something (yes or no, an approval, a time), get a clear answer. Then say "One sec," call the ask_telo tool with exactly what ${first} said, and tell them what it returns.${input.kind === "approval" ? " A vendor is holding on the other line for this answer, so do it right away." : ""}`,
+    `If it asks them something (yes or no, an approval, a time), get a clear answer. Then say "One sec," call the ask_telo tool with their answer in their own words (for example "Yes, it's fixed"), not a summary and not your question, and tell them what it returns.${input.kind === "approval" ? " A vendor is holding on the other line for this answer, so do it right away." : ""}`,
     "If they ask anything else about the repair, pass it to ask_telo the same way. Never ask for passwords, card or bank details.",
     "Then say goodbye and end the call. If you reach voicemail, hang up without leaving a message.",
   ].join("\n\n");
@@ -202,7 +206,15 @@ async function callParty(input: { party: Party; taskId: string | null; body: str
 }
 
 /** On Telo's call with a tenant or owner: what they said is handled like their text, and Telo's reply comes back to be spoken. */
-export async function partySays(party: Party, call: Pick<CallRow, "id" | "taskId">, said: string, waitMs = 20_000): Promise<string> {
+export async function partySays(party: Party, call: Pick<CallRow, "id" | "taskId">, relayed: string, waitMs = 20_000): Promise<string> {
+  const first = firstName(party.name);
+  // Dial's agent tends to report ("Maria said: 'Yes, it's fixed.'"): keep only what they said.
+  const said = relayed
+    .trim()
+    .replace(new RegExp(`^(${first}|${party.name}|she|he|they|the (tenant|owner))( (just )?(said|says|told me|confirmed|answered|replied))( that)?[:,]?\\s*`, "i"), "")
+    .replace(/^["'“‘]+|["'”’]+[.!]?$/g, "")
+    .trim();
+  if (/reply y or n|this is telo|notice of entry|this call is recorded/i.test(said)) return `That's your own line, not ${first}'s answer. Ask them, then pass along exactly what they say.`;
   const capture = { lines: [] as string[], closed: false, party: party.id };
   const work = withVoiceCapture(capture, () => handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${call.id}:${Date.now()}`, onCall: call.taskId })).catch((err) => {
     console.error("[maintenance] couldn't take the answer", err);
@@ -236,7 +248,7 @@ export async function partyCallFinished(call: CallRow): Promise<void> {
 }
 
 /** The same message to the same tenant or owner, on a new call: unless they've answered since (a text, or another call). */
-export async function retryPartyCall(callId: string): Promise<string | null> {
+export async function retryPartyCall(callId: string, opts: { force?: boolean } = {}): Promise<string | null> {
   const prev = await getCall(callId);
   const party = prev?.kind === "party_update" ? partyByName(prev.targetName) : null;
   if (!prev || !party || !prev.targetPhone) return null;
@@ -246,7 +258,7 @@ export async function retryPartyCall(callId: string): Promise<string | null> {
     .from(messages)
     .where(and(eq(messages.direction, "in"), sql`json_extract(${messages.party}, '$.id') = ${party.id}`, gte(messages.createdAt, since)))
     .limit(1);
-  if (answered.length) return null;
+  if (answered.length && !opts.force) return null;
   for (let i = 0; i < 100 && (await phoneBusy(prev.targetPhone)); i++) await sleep(getVoice().name === "mock" ? 100 : 3000);
   const id = newId("call");
   await db.insert(calls).values({
@@ -326,7 +338,7 @@ async function tenantText(party: Party, body: string, channel: string, providerM
     await notifyParty({ party, taskId: open?.id, kind: "reply", body: "Please don't text passwords, PINs or card numbers. I never need them." });
     return true;
   }
-  if (open) return tenantFollowUp(party, open, body, media);
+  if (open) return tenantFollowUp(party, open, body, media, channel);
   // An answer on Telo's call about a job that has closed (safety steps for an emergency) is noted there, not a new job.
   if (onCall !== undefined) return true;
   await startWorkOrder(party, body, channel === "voice" ? "voice" : channel === "email" ? "email" : "sms", media, stored);
@@ -377,7 +389,7 @@ export async function startWorkOrder(party: Party, report: string, source: "sms"
   return id;
 }
 
-async function tenantFollowUp(party: Party, task: TaskRow & { context: TaskContext }, body: string, media: string[]): Promise<boolean> {
+async function tenantFollowUp(party: Party, task: TaskRow & { context: TaskContext }, body: string, media: string[], channel = "sms"): Promise<boolean> {
   const ctx = task.context;
   if (media.length) {
     const have = task.facts.filter((f) => f.key.startsWith("photo_")).length;
@@ -392,11 +404,12 @@ async function tenantFollowUp(party: Party, task: TaskRow & { context: TaskConte
     await vendorNoShow(task);
     return true;
   }
-  if (ctx.stage === "checking" && (YES.test(body) || NO.test(body))) {
-    await closeWorkOrder(task, YES.test(body) && !NO.test(body));
+  const said = yesNo(body, channel === "voice");
+  if (ctx.stage === "checking" && (said.yes || said.no)) {
+    await closeWorkOrder(task, said.yes && !said.no);
     return true;
   }
-  if (ctx.stage === "booked" && !ctx.accessConfirmed && YES.test(body)) {
+  if (ctx.stage === "booked" && !ctx.accessConfirmed && said.yes && !said.no) {
     await patchTask(task.id, { context: { ...ctx, accessConfirmed: true }, facts: [...task.facts.filter((f) => f.key !== "access_confirmed"), { key: "access_confirmed", label: "Tenant agreed to entry", value: `Yes (${new Date().toISOString()})`, sensitive: false, source: "user" }] });
     const when = ctx.booked?.startsAt ? windowLabel(new Date(ctx.booked.startsAt), ctx.booked.endsAt ? new Date(ctx.booked.endsAt) : null, config.user.timezone) : "then";
     await notifyParty({ party, taskId: task.id, kind: "reply", body: `Thanks ${firstName(party.name)}. They'll be there ${when}.`, dedupeKey: `access-ok:${ctx.booked?.callId ?? task.id}:${ctx.reschedules ?? 0}` });

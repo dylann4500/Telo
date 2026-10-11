@@ -54,7 +54,7 @@ export async function POST(req: Request, ctx: RouteContext<"/api/dev/[action]">)
       const { retryPartyCall } = await import("@/server/maintenance");
       const [last] = await db.select().from(calls).where(eq(calls.kind, "party_update")).orderBy(desc(calls.createdAt)).limit(1);
       if (!last) return Response.json({ error: "No call to a tenant or owner yet" }, { status: 404 });
-      const callId = await retryPartyCall(last.id);
+      const callId = await retryPartyCall(last.id, { force: true });
       return Response.json({ ok: Boolean(callId), callId, to: last.targetName, note: callId ? undefined : "They've answered since, so no new call" });
     }
     case "reset": {
