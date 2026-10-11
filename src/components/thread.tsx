@@ -242,12 +242,12 @@ export function Thread({
 
 /** How Telo reaches the user: texts only, or texts plus a phone call for anything that needs them. */
 function UpdatesToggle({ user, onChange }: { user: StateDTO["user"]; onChange: () => void }) {
-  const [pending, setPending] = useState<boolean | null>(null);
-  const calls = pending ?? user.callUpdates;
-  useEffect(() => setPending(null), [user.callUpdates]);
+  // A tap shows right away; once the server's value moves on, it wins again.
+  const [pending, setPending] = useState<{ value: boolean; from: boolean } | null>(null);
+  const calls = pending && pending.from === user.callUpdates ? pending.value : user.callUpdates;
   async function choose(next: boolean) {
     if (next === calls) return;
-    setPending(next);
+    setPending({ value: next, from: user.callUpdates });
     await post("/api/settings", { callUpdates: next });
     onChange();
   }
