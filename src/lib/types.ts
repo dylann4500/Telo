@@ -140,6 +140,28 @@ export interface MemoryDTO {
   trace: { via: string; request: string; ms: number; rows: number }[];
 }
 
+/** One step in "How Telo handled it": what happened, which systems did the work, and what the user heard. */
+export interface FlowStepDTO {
+  id: string;
+  kind: "request" | "understand" | "ask" | "answer" | "memory" | "plan" | "call" | "schedule" | "email" | "calendar" | "done" | "stopped";
+  title: string;
+  detail: string | null;
+  /** The full text when `detail` was shortened. */
+  more: string | null;
+  at: string;
+  tone: "work" | "live" | "wait" | "done" | "bad" | "muted";
+  systems: ("you" | "claude" | "keewano" | "dial" | "gmail" | "calendar")[];
+  badges: string[];
+  /** What happened inside a call while it was on: questions to you, calendar checks, offers, confirmations. */
+  children: { title: string; detail: string | null; at: string; tone: FlowStepDTO["tone"] }[];
+  /** What Telo told you at this step, and how. */
+  told: { how: "text" | "call" | "app" | "voice"; body: string; delivered: boolean }[];
+  /** This step's typed facts went to event memory (Keewano, or the local stand-in), or are on their way. */
+  memory: { where: "keewano" | "local"; synced: boolean } | null;
+  /** Claude made this decision after reading a call or an email. */
+  decided: boolean;
+}
+
 export interface TaskDetailDTO extends TaskSummaryDTO {
   request: string;
   goal: string | null;
@@ -151,5 +173,6 @@ export interface TaskDetailDTO extends TaskSummaryDTO {
   calls: CallDTO[];
   questions: QuestionDTO[];
   events: EventDTO[];
+  flow: FlowStepDTO[];
   lastError: string | null;
 }

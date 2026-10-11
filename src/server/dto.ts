@@ -5,6 +5,7 @@ import { db } from "./db/client";
 import { calls, events, messages, questions, tasks, type CallRow, type QuestionRow, type TaskRow } from "./db/schema";
 import { pairingCode } from "./pairing";
 import { redactFact } from "./redact";
+import { buildFlow } from "./flow";
 import { getUser } from "./tasks/repo";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
@@ -145,6 +146,8 @@ export async function buildTaskDetail(taskId: string): Promise<TaskDetailDTO | n
   const taskCalls = await db.select().from(calls).where(eq(calls.taskId, taskId)).orderBy(asc(calls.createdAt));
   const qs = await db.select().from(questions).where(eq(questions.taskId, taskId)).orderBy(asc(questions.createdAt));
   const evs = await db.select().from(events).where(eq(events.taskId, taskId)).orderBy(asc(events.occurredAt), asc(events.createdAt));
+  const msgs = await db.select().from(messages).where(eq(messages.taskId, taskId));
+  const tz = (await getUser(t.userId))?.timezone ?? config.user.timezone;
   return {
     ...summary(t, taskCalls, qs.filter((q) => q.status === "open").at(-1)),
     request: t.request,
@@ -165,6 +168,7 @@ export async function buildTaskDetail(taskId: string): Promise<TaskDetailDTO | n
       synced: Boolean(e.memorySyncedAt),
       syncError: e.memorySyncError,
     })),
+    flow: buildFlow(t, taskCalls, evs, msgs, tz, config.memory.provider),
     lastError: t.lastError,
   };
 }

@@ -16,9 +16,10 @@ import {
   PhoneIncoming,
   ShieldCheck,
 } from "lucide-react";
-import type { CallDTO, EventDTO, TaskDetailDTO } from "@/lib/types";
+import type { CallDTO, TaskDetailDTO } from "@/lib/types";
 import { post, useTask } from "./api";
 import { LiveAsk, LiveTranscript, VoiceBars } from "./live-call";
+import { TaskFlow } from "./task-flow";
 import { Card, Chip, SectionTitle, StatusPill, clock, shortDate, shortTime, timeAgo, useNow } from "./ui";
 
 export function TaskDetail() {
@@ -87,6 +88,7 @@ export function TaskDetail() {
               {!!task.lastError && task.status !== "completed" && <p className="mt-2 text-[12.5px] text-bad">Last error (retrying): {task.lastError}</p>}
             </Card>
           )}
+          <TaskFlow steps={task.flow} events={task.events} />
           <div>
             <SectionTitle aside={<span className="text-[12px] text-faint">{business.length ? `${business.length} total` : null}</span>}>Calls</SectionTitle>
             {business.length ? (
@@ -117,7 +119,6 @@ export function TaskDetail() {
           <MemoryPanel task={task} />
           <Facts task={task} />
           <Rules task={task} />
-          <Timeline events={task.events} />
         </aside>
       </div>
     </div>
@@ -431,65 +432,5 @@ function RuleList({ title, items, tone }: { title: string; items: string[]; tone
         ))}
       </ul>
     </div>
-  );
-}
-
-const EVENT_LABEL: Record<string, string> = {
-  "task.created": "Task created",
-  "task.info_requested": "Asked you",
-  "task.info_received": "You answered",
-  "task.plan_generated": "Plan ready",
-  "memory.retrieved": "Checked history",
-  "call.started": "Call placed",
-  "call.connected": "Connected",
-  "call.completed": "Call ended",
-  "call.failed": "Call failed",
-  "call.transcript_processed": "Read the call",
-  "business.fact_discovered": "Learned",
-  "offer.received": "Offer",
-  "offer.accepted": "Offer accepted",
-  "offer.declined": "Offer declined",
-  "commitment.received": "Promise",
-  "commitment.fulfilled": "Promise kept",
-  "commitment.broken": "Promise broken",
-  "confirmation.received": "Confirmation",
-  "approval.requested": "Needs your OK",
-  "approval.granted": "You approved",
-  "approval.denied": "You declined",
-  "followup.required": "Follow-up",
-  "task.completed": "Done",
-  "task.failed": "Stopped",
-  "task.cancelled": "Cancelled",
-  "message.sent": "Told you",
-  "preference.saved": "Preference saved",
-};
-
-function Timeline({ events }: { events: EventDTO[] }) {
-  const shown = events.filter((e) => e.type !== "message.sent");
-  if (!shown.length) return null;
-  return (
-    <Card className="p-4">
-      <SectionTitle aside={<span className="text-[11px] text-faint">● sent to Keewano</span>}>Timeline</SectionTitle>
-      <ol className="relative space-y-3 border-l border-line pl-4">
-        {shown.map((e) => (
-          <li key={e.id} className="relative">
-            <span
-              className={clsx(
-                "absolute -left-[21px] top-1.5 size-2.5 rounded-full border-2 border-surface",
-                e.type.startsWith("commitment.broken") ? "bg-bad" : e.type.startsWith("call.") ? "bg-live" : e.type.includes("approval") ? "bg-wait" : "bg-faint",
-              )}
-            />
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[12px] font-semibold text-muted">{EVENT_LABEL[e.type] ?? e.type}</span>
-              <span className="shrink-0 text-[11px] text-faint">
-                {e.mirrored && <span title={e.synced ? "Mirrored to memory" : e.syncError ?? "Waiting to sync"} className={clsx("mr-1", e.synced ? "text-live" : "text-faint")}>●</span>}
-                {shortTime(e.occurredAt)}
-              </span>
-            </div>
-            <p className="text-[13px] leading-snug text-ink/85">{e.summary}</p>
-          </li>
-        ))}
-      </ol>
-    </Card>
   );
 }
