@@ -3,6 +3,7 @@ import { canTransition, sourcesFor } from "../src/server/domain/state-machine";
 import { orgKeyFor } from "../src/server/ids";
 import { containsSecret, maskSecrets, redactValue } from "../src/server/redact";
 import { normalizeDialEvent, signDialPayload, verifyDialSignature } from "../src/server/voice/dial-webhook";
+import { looksLikeVoicemail } from "../src/server/concierge";
 import { sanitizeForSms } from "../src/server/voice/provider";
 
 describe("task state machine", () => {
@@ -75,6 +76,14 @@ describe("redaction", () => {
     expect(containsSecret("ssn 123-45-6789")).toBe(true);
     expect(containsSecret("account number 8800 1234 5678")).toBe(false);
     expect(maskSecrets("the password is hunter2 ok")).toBe("the [withheld] ok");
+  });
+});
+
+describe("voicemail greetings", () => {
+  it("are recognized and not mistaken for the user", () => {
+    expect(looksLikeVoicemail("Sorry. The person you are trying to reach has a voice mailbox that has not been set up yet. Please try your call again later. Goodbye.")).toBe(true);
+    expect(looksLikeVoicemail("You've reached Dylan, leave me a message after the tone.")).toBe(true);
+    expect(looksLikeVoicemail("Yeah keep cancelling, don't take the offer.")).toBe(false);
   });
 });
 

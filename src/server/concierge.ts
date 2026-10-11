@@ -292,6 +292,13 @@ export async function decideTask(user: UserRow, taskId: string, optionId: string
   return Boolean(moved);
 }
 
+const VOICEMAIL = /voice ?mail|mailbox|leave (me )?a message|after the (tone|beep)|at the tone|record your message|is not available|has not been set up|please try (your call )?again later|cannot be completed as dialed/i;
+
+/** Carrier and voicemail greetings are short and formulaic. */
+export function looksLikeVoicemail(text: string): boolean {
+  return VOICEMAIL.test(text) && text.split(/\s+/).length < 60;
+}
+
 /** The user called Telo (or Telo called the user): act on what they said. */
 export async function handleUserCallFinished(callId: string): Promise<void> {
   const call = await getCall(callId);
@@ -300,6 +307,20 @@ export async function handleUserCallFinished(callId: string): Promise<void> {
   if (!user || !call.transcript.length) return;
   const said = call.transcript.filter((t) => t.speaker === "other").map((t) => t.text);
   if (!said.length) return;
+  if (looksLikeVoicemail(said.join(" "))) {
+    // A carrier or voicemail greeting, not the user: note it and stop.
+    await db.insert(messages).values({
+      id: newId("msg"),
+      userId: user.id,
+      taskId: call.taskId,
+      direction: "in",
+      channel: "voice",
+      kind: "call",
+      body: "(missed: Telo's call went to voicemail)",
+      status: "received",
+    });
+    return;
+  }
   // Mirror the call into the conversation thread.
   await db.insert(messages).values({
     id: newId("msg"),
@@ -308,7 +329,7 @@ export async function handleUserCallFinished(callId: string): Promise<void> {
     direction: "in",
     channel: "voice",
     kind: "call",
-    body: `(on the phone) ${said.join(" ")}`,
+    body: `${call.kind === "user_update" ? "(Telo called you)" : "(you called Telo)"} ${said.join(" ")}`,
     status: "received",
   });
   // Tasks created through the live tools during this call must not be created twice.
