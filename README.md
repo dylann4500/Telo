@@ -61,11 +61,11 @@ flowchart LR
 
 1. A text arrives (Dial webhook). The signature is verified, the event is stored under Dial's event id (so a redelivery is a no-op), and processing happens after the 200.
 2. The **concierge** asks Claude to route the message: a new task, an answer to an open question, a decision, a status question, a cancel, a preference.
-3. The **orchestrator** drives the task through explicit states: `new → needs_info → planning → ready → calling → reviewing → needs_approval → … → completed | failed | cancelled`. Every transition is a compare-and-swap on `(status, version)`, so racing webhooks can't double-dial.
+3. The **orchestrator** drives the task through explicit states: `new → needs_info → planning → ready → calling → reviewing → needs_approval | scheduled → … → completed | failed | cancelled`. Every transition is a compare-and-swap on `(status, version)`, so racing webhooks can't double-dial.
 4. **Planning** runs a live **Keewano** query for the history between you and that business, has Claude turn it into a short brief, and writes the call plan: objective, what may be disclosed, what Telo can decide alone, what needs you, what to collect.
 5. The call brief is rendered with fixed guardrails: it identifies itself as an AI calling for you, never shares passwords, PINs or card numbers, never claims what it doesn't know, and defers anything outside its authority with "I'll confirm with Dylan and call back". It is then placed with Dial (`makeCall`, idempotency key = Telo's call id).
 6. When Dial reports `call.transcribed`, Claude reads the transcript into structured outcomes: offers, promises, confirmation numbers, rep name, quotes, promises from earlier calls now found kept or broken, and whether a decision is needed.
-7. Claude decides the next step: complete, ask you, call the next business, call back with your decision, or retry. You get one concise text.
+7. Claude decides the next step: complete, ask you (a decision, or a detail the business needs), call the next business, call back now, retry later, or **schedule** a call for when the business said ("call back in 3 days", "we open Monday at 9", "we'll call you back"). Scheduled calls wake on their own (inside 8 AM–9 PM), a business calling Telo's line back is matched to its task, and every task has a call cap. You get one concise text.
 8. Everything that happened is recorded as an event. Typed events (categories, cents, seconds; never names or transcripts) are mirrored to Keewano on four streams: you × business (the main memory), the business, the task, and you.
 
 More detail: [docs/architecture.md](docs/architecture.md). The sponsor research behind every integration detail is in [docs/integrations/dial.md](docs/integrations/dial.md) and [docs/integrations/keewano.md](docs/integrations/keewano.md).
@@ -165,11 +165,12 @@ src/server/
   voice/               Dial client, webhook verify/normalize, simulated line, event ingest
   memory/              event recorder + outbox, Keewano client (REST in, SQL out), local stand-in
   db/                  Drizzle schema, migrations runner, seed data
-  background.ts        retries, missed-webhook recovery, memory sync, voice-line refresh
+  background.ts        wakes scheduled calls, retries, missed-webhook recovery, memory sync, reminders, voice-line refresh
+  time.ts              the user's timezone: "now" for Claude, calling hours, scheduled-time labels
 src/app/api/           webhooks/dial, mcp, state, tasks, messages, dev
 src/components/        dashboard (iMessage-style thread, task board, live call, task detail)
-scripts/               setup, tunnel, dial:setup, keewano:check
-tests/                 unit + end-to-end tests on the simulated stack
+scripts/               setup, tunnel, dial:setup, keewano:check, llm:check, lab (edge cases with real Claude)
+tests/                 unit + end-to-end tests on the simulated stack, including the autonomy edge cases
 ```
 
 ## Deployment notes

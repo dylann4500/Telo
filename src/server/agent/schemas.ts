@@ -81,6 +81,10 @@ export const UnderstandSchema = z.object({
   missing: z.array(InfoFieldSchema).describe("Only information the calls genuinely need and Telo lacks"),
   constraints: z.array(z.string()).describe("Time windows, budgets, party size, preferences for this task"),
   authority: AuthoritySchema,
+  callAt: z
+    .string()
+    .nullable()
+    .describe("Only if the user asked for the call to happen later ('tomorrow morning', 'Monday at 9'): when, ISO 8601 with offset. null to call now"),
   acknowledgement: z
     .string()
     .describe("First text back to the user: confirm the task in a few words and ask the missing questions, if any"),
@@ -159,11 +163,18 @@ export const CallAnalysisSchema = z.object({
     .object({ question: z.string(), options: z.array(OptionSchema) })
     .nullable()
     .describe("Set when the business offered something only the user can decide"),
+  callbackAt: z
+    .string()
+    .nullable()
+    .describe("If the business asked to be called back later, when: an ISO 8601 date-time with offset, resolved from 'now'. null otherwise"),
+  infoRequested: z
+    .array(z.object({ label: z.string(), reason: z.string() }))
+    .describe("Details the business asked for that Telo didn't have (account number, date of birth...)"),
   nextStep: z.string(),
 });
 
 export const DecideSchema = z.object({
-  action: z.enum(["complete", "ask_user", "next_call", "callback", "retry", "fail"]),
+  action: z.enum(["complete", "ask_user", "ask_info", "next_call", "callback", "schedule", "retry", "fail"]),
   userMessage: z
     .string()
     .describe("Text message to the user: at most two short sentences, under 280 characters. Empty string if nothing new"),
@@ -175,7 +186,15 @@ export const DecideSchema = z.object({
       objective: z.string(),
       talkingPoints: z.array(z.string()),
     })
-    .nullable(),
+    .nullable()
+    .describe("For callback and schedule: the call to make"),
+  scheduleAt: z
+    .string()
+    .nullable()
+    .describe("For schedule: when to call, ISO 8601 with offset: the business's callbackAt, or a time it is likely open"),
+  infoFields: z
+    .array(z.object({ key: z.string(), label: z.string(), question: z.string(), sensitive: z.boolean() }))
+    .describe("For ask_info: what to ask the user. Use key phone_<business> for a correct phone number"),
   result: z
     .object({
       outcome: z.enum(["success", "partial", "failed"]),

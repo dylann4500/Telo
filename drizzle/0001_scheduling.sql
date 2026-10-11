@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` ADD `wake_at` integer;

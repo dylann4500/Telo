@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { formatWhen, localIso, localParts, zonedTime } from "../time";
 import type { LLM, StructuredRequest } from "./llm";
 
 // A rule-based stand-in for the model, used when no ANTHROPIC_API_KEY is set
@@ -51,6 +52,42 @@ function categorize(text: string): string {
 
 function moneyValues(text: string): number[] {
   return [...text.matchAll(MONEY)].map((m) => Number(m[1]));
+}
+
+/** The "now" block: "2026-10-10T19:05:00-07:00 (Saturday, ..., America/Los_Angeles)". */
+function clock(b: Blocks): { now: Date; tz: string } {
+  const raw = String(b.now ?? "");
+  const iso = raw.match(/^\S+/)?.[0];
+  const tz = raw.match(/, ([A-Za-z_]+\/[A-Za-z_]+)\)$/)?.[1] ?? "America/Los_Angeles";
+  const now = iso && !Number.isNaN(Date.parse(iso)) ? new Date(iso) : new Date();
+  return { now, tz };
+}
+
+const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+/** "in 3 days", "tomorrow", "next week", "on Thursday" (at an optional "9 am") → a local time. */
+function laterTime(text: string, b: Blocks): string | null {
+  const { now, tz } = clock(b);
+  const t = text.toLowerCase();
+  let days: number | null = null;
+  const inDays = t.match(/\bin (\d+|two|three|four|five) (business )?days?\b/);
+  if (inDays) days = Number(inDays[1]) || { two: 2, three: 3, four: 4, five: 5 }[inDays[1]] || null;
+  else if (/\btomorrow\b/.test(t)) days = 1;
+  else if (/\b(next week|in a week|a week from)\b/.test(t)) days = 7;
+  else {
+    const day = DAYS.findIndex((d) => new RegExp(`\\b(on |this |next )?${d}\\b`).test(t));
+    if (day >= 0) days = ((day - localParts(now, tz).weekday + 7) % 7) || 7;
+  }
+  if (days === null) return null;
+  const at = t.match(/\bat (\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+  let hour = 10;
+  let minute = 0;
+  if (at) {
+    hour = (Number(at[1]) % 12) + (at[3] === "pm" ? 12 : 0);
+    minute = Number(at[2] ?? 0);
+  }
+  const p = localParts(new Date(now.getTime() + days * 86_400_000), tz);
+  return localIso(zonedTime(p.year, p.month, p.day, hour, minute, tz), tz);
 }
 
 function confirmationNumbers(text: string): string[] {
@@ -133,6 +170,10 @@ export class MockLLM implements LLM {
       }).filter((a) => a.value);
       return { containsSecret, actions: [{ ...base, type: "provide_info", taskId: waiting.id, answers }], reply: null };
     }
+    const scheduled = tasks.find((t) => t.status === "scheduled");
+    if (scheduled && /\b(call (them|it) (now|right away)|call now|don'?t wait)\b/i.test(text)) {
+      return { containsSecret, actions: [{ ...base, type: "retry_task", taskId: scheduled.id }], reply: null };
+    }
     const failed = tasks.find((t) => t.status === "failed");
     if (failed && /\b(try again|retry|give it another)\b/i.test(text)) {
       return { containsSecret, actions: [{ ...base, type: "retry_task", taskId: failed.id }], reply: null };
@@ -188,6 +229,8 @@ export class MockLLM implements LLM {
               ? `Book ${name ?? "a table"}`
               : `${verb} ${name ?? "business"}`;
     const ask = missing.map((m) => (m as { question: string }).question).join(" ");
+    const callAt = /\bcall\b/i.test(request) ? laterTime(request, b) : null;
+    const when = callAt ? formatWhen(new Date(callAt), clock(b).tz, { now: clock(b).now }) : null;
     return {
       title,
       goal: request,
@@ -201,13 +244,14 @@ export class MockLLM implements LLM {
       facts,
       missing,
       constraints: moneyValues(request).map((v) => `Budget up to $${v}`),
+      callAt,
       authority: {
         allowed: ["Do exactly what was asked", "Ask about policies, fees and timing"],
         askFirst: ["Retention offers or discounts instead of the requested action", "Any new fee or contract", "Anything different from the request"],
         never: ["Share passwords or PINs"],
         spendLimitUsd: moneyValues(request)[0] ?? null,
       },
-      acknowledgement: missing.length ? `On it. ${ask}` : `On it. I'll call ${name ?? "them"} and let you know how it goes.`,
+      acknowledgement: missing.length ? `On it. ${ask}` : when ? `Got it. I'll call ${name ?? "them"} ${when}.` : `On it. I'll call ${name ?? "them"} and let you know how it goes.`,
     };
   }
 
@@ -253,6 +297,8 @@ export class MockLLM implements LLM {
       quote: null as unknown,
       decisionNeeded: null as unknown,
       priorCommitments: [] as unknown[],
+      callbackAt: null as string | null,
+      infoRequested: [] as { label: string; reason: string }[],
     };
     const priorConf = (String(b.prior_history_given_to_agent ?? "") + " " + JSON.stringify(b.call_brief ?? "")).match(/confirmation ([A-Z0-9]{4,})/i)?.[1] ?? null;
     if (/never (got )?applied|wasn't applied|was not applied|don't see (it|the credit)|no record/i.test(all) && priorConf) {
@@ -260,6 +306,36 @@ export class MockLLM implements LLM {
     }
     if (!them.trim()) {
       return { ...base, outcome: "no_answer", summary: "Nobody picked up.", nextStep: "Try again later." };
+    }
+    if (/wrong number|no one (here )?by that name|this is a (private )?residence|not (a|the) business/i.test(them)) {
+      return { ...base, outcome: "wrong_number", summary: "Wrong number: it isn't the business.", nextStep: "Get the right number." };
+    }
+    if (/only (speak|talk|discuss)\w* (with|to) the account holder|account holder (has|needs|will need) to/i.test(them)) {
+      return { ...base, outcome: "failed", summary: "They'll only discuss the account with the account holder.", nextStep: "The user has to call themselves." };
+    }
+    const needed = them.match(/\b(?:need|have|get) (?:the|your) (account number|member(?:ship)? (?:id|number)|date of birth|order number)\b/i)?.[1];
+    if (needed && !confs.length) {
+      const label = needed[0].toUpperCase() + needed.slice(1).toLowerCase();
+      return {
+        ...base,
+        outcome: "partial",
+        summary: `They need the ${needed.toLowerCase()} to go further.`,
+        infoRequested: [{ label, reason: "To find the account" }],
+        callbackAt: laterTime(them, b),
+        nextStep: `Get the ${needed.toLowerCase()} and call back.`,
+      };
+    }
+    const callLater = /\b(call (us |me )?back|try (us |again)|check back|check again|reach out again)\b/i.test(them) || /\b(we|i)('| wi)ll call you back\b/i.test(them);
+    const later = callLater ? laterTime(them, b) : null;
+    if (later && !confs.length) {
+      return {
+        ...base,
+        outcome: "callback_required",
+        summary: `They asked for a call back later.`,
+        callbackAt: later,
+        commitments: /\b(we|i)('| wi)ll call you back\b/i.test(them) ? [{ by: "business", kind: "callback", description: "Call back", amountUsd: null, due: later }] : [],
+        nextStep: "Call back then.",
+      };
     }
     const deferred = /confirm with|check with|get back to you|call (you )?back/i.test(all);
     if (deferred && /\/\s?month|per month|a month|discount|instead/i.test(them)) {
@@ -318,13 +394,41 @@ export class MockLLM implements LLM {
   }
 
   private decide(b: Blocks) {
-    const calls = (b.calls_so_far as { target: string; attempt: number; analysis: { outcome: string; summary: string; confirmationNumbers: string[]; decisionNeeded: { question: string; options: unknown[] } | null; quote: { priceUsd: number | null; availability: string | null } | null } | null }[]) ?? [];
+    const calls = (b.calls_so_far as {
+      target: string;
+      attempt: number;
+      analysis: {
+        outcome: string;
+        summary: string;
+        confirmationNumbers: string[];
+        decisionNeeded: { question: string; options: unknown[] } | null;
+        quote: { priceUsd: number | null; availability: string | null } | null;
+        callbackAt: string | null;
+        infoRequested: { label: string }[];
+      } | null;
+    }[]) ?? [];
     const remaining = (b.planned_calls_not_yet_made as unknown[]) ?? [];
     const task = b.task as { title: string; category: string | null };
     const last = calls[calls.length - 1];
     const a = last?.analysis;
-    const base = { question: null, callback: null, result: null, learnedFacts: [] };
+    const base = { question: null, callback: null, result: null, learnedFacts: [], scheduleAt: null, infoFields: [] };
     const decision = b.users_latest_decision as string | undefined;
+    const followUp = (purpose: string) => ({ targetName: last.target, purpose, objective: task.title, talkingPoints: [purpose] });
+    if (a?.outcome === "callback_required" && a.callbackAt) {
+      return { ...base, action: "schedule", scheduleAt: a.callbackAt, callback: followUp("Follow up as they asked"), userMessage: "" };
+    }
+    if (a?.outcome === "wrong_number") {
+      const field = { key: `phone_${last.target.toLowerCase()}`, label: `${last.target}'s number`, question: `What's the right number for ${last.target}?`, sensitive: false };
+      return { ...base, action: "ask_info", infoFields: [field], userMessage: `That number wasn't ${last.target}. ${field.question}` };
+    }
+    if (a?.infoRequested?.length) {
+      const fields = a.infoRequested.map((r) => ({ key: r.label.toLowerCase().replace(/\W+/g, "_"), label: r.label, question: `What's your ${r.label.toLowerCase()}?`, sensitive: true }));
+      return { ...base, action: "ask_info", infoFields: fields, callback: followUp("Give them what they asked for"), userMessage: `${last.target} needs your ${fields.map((f) => f.label.toLowerCase()).join(" and ")}. ${fields[0].question}` };
+    }
+    if (a?.outcome === "failed" && /account holder/i.test(a.summary)) {
+      const msg = `${last.target} will only talk to the account holder, so you'll need to call them yourself.`;
+      return { ...base, action: "fail", userMessage: msg, result: { outcome: "failed", summary: a.summary, confirmation: null } };
+    }
     if (a?.outcome === "needs_user_decision" && a.decisionNeeded && !decision) {
       return { ...base, action: "ask_user", userMessage: a.decisionNeeded.question, question: { prompt: a.decisionNeeded.question, options: a.decisionNeeded.options } };
     }

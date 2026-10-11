@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useEffect, useState } from "react";
 import {
   Ban,
+  CalendarClock,
   CircleCheck,
   Hourglass,
   LoaderCircle,
@@ -32,6 +33,7 @@ export const STATUS: Record<TaskStatus, { label: string; tone: Tone; icon: Lucid
   calling: { label: "On the phone", tone: "live", icon: PhoneCall },
   reviewing: { label: "Going over the call", tone: "work", icon: LoaderCircle },
   needs_approval: { label: "Needs your OK", tone: "wait", icon: Hourglass },
+  scheduled: { label: "Calling later", tone: "work", icon: CalendarClock },
   completed: { label: "Done", tone: "done", icon: CircleCheck },
   failed: { label: "Stopped", tone: "bad", icon: TriangleAlert },
   cancelled: { label: "Cancelled", tone: "muted", icon: Ban },

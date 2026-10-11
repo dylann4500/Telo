@@ -1,7 +1,10 @@
 // Scripted businesses for the simulated phone line. With a Claude key the
 // mock asks Claude to role-play the `persona`; without one it plays the
 // canned `script`. Each script reacts to what the call brief says (prior
-// history, the user's decision), so follow-up calls behave differently.
+// history, the user's decision), so follow-up calls behave differently. A
+// persona can also depend on how many times the business has been called:
+// a string is role-played, fixed turns are played as written, and null
+// means nobody picks up.
 
 export interface SimTurn {
   speaker: "agent" | "other";
@@ -12,11 +15,12 @@ export interface ScriptContext {
   user: string;
   business: string;
   instructions: string;
+  callNumber: number; // 1 for the first call this business gets
 }
 
 export interface Scenario {
   match: RegExp;
-  persona: string;
+  persona: string | ((callNumber: number) => string | SimTurn[] | null);
   script(ctx: ScriptContext): SimTurn[] | "no_answer";
 }
 

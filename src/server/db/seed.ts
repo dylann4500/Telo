@@ -133,6 +133,8 @@ export async function seedDemoHistory(): Promise<{ created: boolean }> {
       repName: null,
       quote: null,
       decisionNeeded: null,
+      callbackAt: null,
+      infoRequested: [],
       nextStep: "Check the next bill for the credit.",
     },
     createdAt: at(1),

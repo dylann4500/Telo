@@ -1,11 +1,12 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "../db/client";
 import { calls, messages, type CallRow } from "../db/schema";
-import type { CallStatus } from "../domain/types";
-import { newId } from "../ids";
+import { TERMINAL_STATUSES, type CallStatus } from "../domain/types";
+import { newId, orgKeyFor } from "../ids";
 import { recordEvent } from "../memory/events";
-import { getCall, getCallByProviderId, getUserByPhone, patchTask } from "../tasks/repo";
+import { maskSecrets } from "../redact";
+import { getCall, getCallByProviderId, getTask, getUserByPhone, listActiveTasks, listCalls, patchTask } from "../tasks/repo";
 import { getVoice } from "./index";
 import type { VoiceEvent } from "./provider";
 
@@ -65,23 +66,50 @@ export async function ingestVoiceEvent(e: VoiceEvent): Promise<void> {
   }
 }
 
+const digitsOf = (phone: string | null | undefined) => phone?.replace(/\D/g, "").slice(-10) ?? "";
+
+async function nextSeq(taskId: string): Promise<number> {
+  return Math.max(0, ...(await listCalls(taskId)).map((c) => c.seq)) + 1;
+}
+
+/** A business returning Telo's call: the open task that most recently called this number. */
+async function taskCalledFrom(from: string | null) {
+  const digits = digitsOf(from);
+  if (digits.length < 10) return null;
+  const recent = await db
+    .select()
+    .from(calls)
+    .where(and(eq(calls.kind, "business"), eq(calls.direction, "outbound"), isNotNull(calls.taskId), gte(calls.createdAt, new Date(Date.now() - 30 * 86_400_000))))
+    .orderBy(desc(calls.createdAt))
+    .limit(200);
+  for (const c of recent) {
+    if (digitsOf(c.targetPhone) !== digits) continue;
+    const task = await getTask(c.taskId!);
+    if (task && !TERMINAL_STATUSES.includes(task.status)) return { taskId: task.id, userId: task.userId, targetName: c.targetName, orgKey: c.orgKey, seq: await nextSeq(task.id) };
+  }
+  return null;
+}
+
 /** The call row for a provider call id. Inbound calls are created on first sight. */
 async function resolveCall(e: Extract<VoiceEvent, { kind: "call.status" | "call.ended" }>): Promise<CallRow | undefined> {
   const existing = await getCallByProviderId(e.providerCallId);
   if (existing) return existing;
   if (e.direction === "inbound") {
     const user = e.from ? await getUserByPhone(e.from) : undefined;
+    const callback = user ? null : await taskCalledFrom(e.from);
     await db
       .insert(calls)
       .values({
         id: newId("call"),
-        userId: user?.id ?? config.user.id,
-        taskId: null,
+        userId: user?.id ?? callback?.userId ?? config.user.id,
+        taskId: callback?.taskId ?? null,
         direction: "inbound",
         kind: user ? "user_inbound" : "business",
-        targetName: user ? user.name : e.from ?? "Unknown caller",
+        seq: callback?.seq ?? 0,
+        orgKey: callback?.orgKey ?? null,
+        targetName: user ? user.name : callback?.targetName ?? e.from ?? "Unknown caller",
         targetPhone: e.from,
-        purpose: user ? `${user.name} called Telo` : "Inbound call",
+        purpose: user ? `${user.name} called Telo` : callback ? `${callback.targetName} called back` : "Inbound call",
         status: "in_progress",
         provider: getVoice().name,
         providerCallId: e.providerCallId,
@@ -168,6 +196,39 @@ async function onTranscribed(providerCallId: string) {
   await finishCall(call.id);
 }
 
+const theySaid = (call: CallRow) => call.transcript.filter((t) => t.speaker === "other").map((t) => t.text).join(" ").trim();
+
+/** A caller from an unknown number who names a business Telo is working with (a call center calling back from another line). */
+async function linkByMention(call: CallRow): Promise<CallRow | null> {
+  const said = theySaid(call).toLowerCase();
+  if (!said) return null;
+  const tasks = (await listActiveTasks(call.userId)).filter((t) => t.targets.some((x) => x.name.length >= 4 && said.includes(x.name.toLowerCase())));
+  if (tasks.length !== 1) return null; // nobody, or ambiguous
+  const task = tasks[0];
+  const target = task.targets.find((x) => said.includes(x.name.toLowerCase()))!;
+  const rows = await db
+    .update(calls)
+    .set({ taskId: task.id, seq: await nextSeq(task.id), targetName: target.name, orgKey: orgKeyFor(target.name), purpose: `${target.name} called back` })
+    .where(and(eq(calls.id, call.id), isNull(calls.taskId)))
+    .returning();
+  return rows[0] ?? null;
+}
+
+/** What a caller said on Telo's line, passed on to the user. */
+async function passOnMessage(call: CallRow) {
+  const said = maskSecrets(theySaid(call));
+  if (!said) return;
+  const { notify } = await import("../notify");
+  const who = call.taskId ? call.targetName : call.targetPhone ?? "Someone";
+  await notify({
+    userId: call.userId,
+    taskId: call.taskId,
+    kind: "update",
+    body: `${who} called my line: "${said.length > 220 ? `${said.slice(0, 217)}...` : said}"`,
+    dedupeKey: `inbound:${call.id}`,
+  });
+}
+
 /** Hands a finished call to whoever owns it, exactly once (claimed via `finishedAt`). */
 export async function finishCall(callId: string): Promise<void> {
   const claimed = await db
@@ -175,9 +236,15 @@ export async function finishCall(callId: string): Promise<void> {
     .set({ finishedAt: new Date() })
     .where(and(eq(calls.id, callId), isNull(calls.finishedAt)))
     .returning();
-  const call = claimed[0];
+  let call = claimed[0];
   if (!call) return;
-  if (call.kind === "business" && call.taskId) {
+  if (call.kind === "business" && call.direction === "inbound") {
+    // A business returning Telo's call: wake the task that was waiting on it,
+    // or at least tell the user what they said.
+    if (!call.taskId) call = (await linkByMention(call)) ?? call;
+    const { onBusinessCalledBack } = await import("../orchestrator");
+    if (!call.taskId || !(await onBusinessCalledBack(call.taskId))) await passOnMessage(call);
+  } else if (call.kind === "business" && call.taskId) {
     const { onBusinessCallFinished } = await import("../orchestrator");
     await onBusinessCallFinished(call.taskId);
   } else if (call.kind === "user_inbound" || call.kind === "user_update") {

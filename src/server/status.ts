@@ -5,6 +5,7 @@ import { getMemory, relationshipHistory } from "./memory";
 import { recordEvent } from "./memory/events";
 import { askKeewano } from "./memory/keewano-ask";
 import { listCalls, listOrganizations, listRecentTasks, openQuestion } from "./tasks/repo";
+import { nowContext } from "./time";
 
 // "What's going on?" answered from live task state, plus event memory when
 // the question is about the past.
@@ -33,6 +34,7 @@ export async function taskSnapshot(task: TaskRow) {
     waitingOnYou: q ? q.prompt : null,
     result: task.result?.summary ?? null,
     confirmation: task.result?.confirmation ?? null,
+    nextCallAt: task.status === "scheduled" && task.wakeAt ? task.wakeAt.toISOString() : null,
     callsMade: calls.filter((c) => c.kind === "business" && c.finishedAt).length,
     updatedAt: task.updatedAt.toISOString(),
   };
@@ -77,7 +79,7 @@ export async function answerStatus(user: UserRow, question: string, opts: { need
       history.push(...h.events.map((e) => ({ business: o.name, occurredAt: e.occurredAt, summary: e.summary, source: e.source })));
     }
   }
-  const r = await agent.answerStatus({ question, now: new Date().toISOString(), tasks, history });
+  const r = await agent.answerStatus({ question, now: nowContext(user.timezone), tasks, history });
   return r.reply;
 }
 

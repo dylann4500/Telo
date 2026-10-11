@@ -109,7 +109,10 @@ export function planCalls(input: {
 }
 
 export function analyzeCall(input: {
+  now: string;
+  direction: "outbound" | "inbound";
   task: { title: string; goal: string | null };
+  agentWasGiven: string[] | null;
   leg: CallBrief | null;
   transcript: TranscriptTurn[];
   endReason: string | null;
@@ -122,8 +125,12 @@ export function analyzeCall(input: {
     name: "analyze-call",
     system: P.ANALYZE_SYSTEM,
     prompt: context({
+      now: input.now,
+      call_direction:
+        input.direction === "inbound" ? "inbound: the business called Telo's line back, and Telo's agent took their message" : undefined,
       task: input.task,
       call_brief: input.leg ?? "(none)",
+      details_agent_was_given: input.agentWasGiven ?? undefined,
       prior_history_given_to_agent: input.history || "(none)",
       end_reason: input.endReason ?? "unknown",
       transcript,
@@ -138,9 +145,11 @@ export function decideNext(input: {
   task: { title: string; goal: string | null; request: string; category: string | null };
   constraints: string[];
   authority: Authority | null;
+  facts: Pick<Fact, "key" | "label" | "value" | "source">[];
   calls: {
     id: string;
     target: string;
+    direction: "outbound" | "inbound";
     purpose: string;
     attempt: number;
     status: string;
@@ -160,6 +169,7 @@ export function decideNext(input: {
       task: input.task,
       constraints: input.constraints,
       authority: input.authority,
+      facts: input.facts,
       calls_so_far: input.calls,
       planned_calls_not_yet_made: input.remainingLegs,
       max_attempts_per_call: input.maxAttemptsPerLeg,

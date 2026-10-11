@@ -77,6 +77,12 @@ export const config = {
 
   calls: {
     maxAttemptsPerLeg: Number(env("TELO_MAX_ATTEMPTS") ?? "2"),
+    // An unanswered call is retried after this many minutes, not instantly.
+    retryMinutes: Number(env("TELO_RETRY_MINUTES") ?? "20"),
+    // Outbound calls one task may make in total (retries, callbacks, scheduled check-ins).
+    maxCallsPerTask: Number(env("TELO_MAX_CALLS_PER_TASK") ?? "6"),
+    // One nudge when a question to the user has gone unanswered this long.
+    remindAfterHours: Number(env("TELO_REMIND_AFTER_HOURS") ?? "4"),
     staleAfterMinutes: Number(env("TELO_CALL_STALE_MINUTES") ?? "20"),
   },
 } as const;

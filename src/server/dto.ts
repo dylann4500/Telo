@@ -43,6 +43,7 @@ function summary(t: TaskRow, taskCalls: CallRow[], open: QuestionRow | undefined
     result: t.result,
     memoryUsed: Boolean(t.memory?.summary),
     callsMade: business.filter((c) => c.finishedAt).length,
+    wakeAt: t.status === "scheduled" ? iso(t.wakeAt) : null,
   };
 }
 

@@ -6,12 +6,13 @@ import type { TaskStatus } from "./types";
 
 export const TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   new: ["needs_info", "planning", "completed", "failed", "cancelled"],
-  needs_info: ["new", "planning", "failed", "cancelled"],
-  planning: ["ready", "needs_info", "completed", "failed", "cancelled"],
+  needs_info: ["new", "planning", "scheduled", "reviewing", "failed", "cancelled"],
+  planning: ["ready", "scheduled", "needs_info", "completed", "failed", "cancelled"],
   ready: ["calling", "reviewing", "needs_info", "failed", "cancelled"],
   calling: ["reviewing", "failed", "cancelled"],
-  reviewing: ["ready", "planning", "needs_approval", "needs_info", "completed", "failed", "cancelled"],
+  reviewing: ["ready", "planning", "needs_approval", "needs_info", "scheduled", "completed", "failed", "cancelled"],
   needs_approval: ["reviewing", "planning", "completed", "cancelled", "failed"],
+  scheduled: ["ready", "planning", "reviewing", "cancelled", "failed"],
   completed: [],
   failed: ["new"], // the user can ask Telo to try again
   cancelled: [],

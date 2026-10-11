@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import * as agent from "./agent";
-import { renderCallInstructions } from "./agent/call-instructions";
+import { renderCallInstructions, shareableDetails } from "./agent/call-instructions";
 import { config } from "./config";
 import { db } from "./db/client";
 import { calls, organizations, questions, type CallRow, type TaskRow, type UserRow } from "./db/schema";
@@ -9,6 +9,7 @@ import type {
   CallAnalysis,
   CallBrief,
   Fact,
+  FollowUp,
   InfoField,
   MemoryBrief,
   TaskCategory,
@@ -17,12 +18,14 @@ import type {
   TaskTarget,
   TypedFacts,
 } from "./domain/types";
+import type { DecideResult } from "./agent/schemas";
 import { newId, orgKeyFor } from "./ids";
 import { relationshipHistory } from "./memory";
 import { recordEvent } from "./memory/events";
 import { notify } from "./notify";
 import { maskSecrets, redactFact } from "./redact";
 import { getTask, getUser, listCalls, listOrganizations, listRecentTasks, patchTask, transitionTask } from "./tasks/repo";
+import { clampToCallingHours, formatWhen, nextWeekdayMorning, nowContext } from "./time";
 import { getVoice } from "./voice";
 import { parseDialError } from "./voice/dial";
 
@@ -128,7 +131,32 @@ async function onStepError(task: TaskRow, err: unknown) {
 // ---------------------------------------------------------------- helpers
 
 function now(user: UserRow): string {
-  return new Date().toLocaleString("en-US", { timeZone: user.timezone, dateStyle: "full", timeStyle: "short" });
+  return nowContext(user.timezone);
+}
+
+const UNREACHED: readonly CallAnalysis["outcome"][] = ["no_answer", "voicemail", "failed"];
+
+// Never asked for by text, whatever the business says it needs.
+const SECRET_FIELD = /password|passcode|\bpin\b|security (code|answer|question)|social security|\bssn\b|\bcvv\b|\bcvc\b|(full|entire|whole) (credit |debit )?card number/i;
+
+/**
+ * When to call back, from a time the model proposed: in the future (at least
+ * ten minutes out, at most a year), and inside calling hours. No usable time
+ * means 10:00 on the next weekday.
+ */
+function callbackTime(proposed: string | null | undefined, tz: string): { at: Date; moved: boolean } {
+  const parsed = proposed ? Date.parse(proposed) : NaN;
+  if (Number.isNaN(parsed)) return { at: nextWeekdayMorning(tz), moved: true };
+  const bounded = Math.min(Math.max(parsed, Date.now() + 10 * 60_000), Date.now() + 365 * 86_400_000);
+  const at = clampToCallingHours(new Date(bounded), tz);
+  return { at, moved: Math.abs(at.getTime() - parsed) > 60_000 };
+}
+
+/** A time the user asked for ("call them tomorrow at 9"): honored as given, if it's still ahead. */
+function requestedTime(proposed: string | null | undefined): Date | null {
+  const parsed = proposed ? Date.parse(proposed) : NaN;
+  if (Number.isNaN(parsed) || parsed < Date.now() + 2 * 60_000) return null;
+  return new Date(Math.min(parsed, Date.now() + 365 * 86_400_000));
 }
 
 function taskKind(task: Pick<TaskRow, "category" | "goal" | "title">): string {
@@ -268,6 +296,8 @@ async function understand(task: TaskRow): Promise<boolean> {
     constraints: r.constraints,
     authority: r.authority,
     orgKey: targets[0] ? orgKeyFor(targets[0].name) : task.orgKey,
+    // "Call them tomorrow at 9": the plan is made now, the call waits.
+    wakeAt: requestedTime(r.callAt),
   };
 
   await recordEvent({
@@ -410,23 +440,31 @@ async function plan(task: TaskRow): Promise<boolean> {
   }
   if (!legs.length) throw new Error("The plan had no calls");
 
+  // The user asked for the call to happen later: the calls are queued and wait.
+  const later = !followUp && task.wakeAt && task.wakeAt.getTime() > Date.now() + 60_000 ? task.wakeAt : null;
+  const who = [...new Set(legs.map((l) => l.targetName))].join(", ");
   const moved = await transitionTask(
     task.id,
-    "ready",
+    later ? "scheduled" : "ready",
     {
       plan: { strategy: p.strategy, parallel: p.parallel, legs: [...(task.plan?.legs ?? []), ...legs] },
       memory,
       followUp: null,
-      statusDetail: `About to call ${legs.map((l) => l.targetName).join(", ")}`,
+      wakeAt: later,
+      statusDetail: later ? `Calling ${who} ${formatWhen(later, user.timezone, { absolute: true })}` : `About to call ${who}`,
     },
     ["planning"],
   );
   if (!moved) return false;
   await recordEvent({ userId: task.userId, taskId: task.id, orgKey: task.orgKey, type: "task.plan_generated", summary: `Plan: ${p.strategy}`, data: { legs: legs.length } });
-  if (!followUp) {
-    await notify({ userId: task.userId, taskId: task.id, kind: "update", body: p.userUpdate, dedupeKey: `plan:${task.id}` });
+  // Without earlier questions, the acknowledgement already said "calling now"
+  // (or when); this update is for after answers, or to share remembered history.
+  const ackSent = !(await db.query.questions.findFirst({ where: and(eq(questions.taskId, task.id), eq(questions.status, "answered")) }));
+  if (!followUp && (!ackSent || (!later && memory.summary))) {
+    const body = later ? `Got it. I'll call ${who} ${formatWhen(later, user.timezone)}.` : p.userUpdate;
+    await notify({ userId: task.userId, taskId: task.id, kind: "update", body, dedupeKey: `plan:${task.id}` });
   }
-  return true;
+  return !later;
 }
 
 /** ready → calling: place the next planned call (or all of them, for a parallel plan). */
@@ -531,11 +569,38 @@ export async function onBusinessCallFinished(taskId: string): Promise<void> {
   if (moved) kick(taskId);
 }
 
-/** reviewing → ready | planning | needs_approval | completed | failed. */
+/** A business called Telo's line back about a task Telo was waiting on: read what they said. */
+export async function onBusinessCalledBack(taskId: string): Promise<boolean> {
+  const moved = await transitionTask(taskId, "reviewing", { wakeAt: null, statusDetail: "They called back" }, ["scheduled"]);
+  if (moved) kick(taskId);
+  return Boolean(moved);
+}
+
+/** scheduled → ready | planning: the time Telo set has come (or the user said "call now"). */
+export async function wakeTask(taskId: string): Promise<boolean> {
+  const task = await getTask(taskId);
+  if (!task || task.status !== "scheduled") return false;
+  const planned = (await listCalls(taskId)).filter((c) => c.kind === "business" && c.status === "planned");
+  const name = planned[0]?.targetName ?? task.followUp?.callback?.targetName ?? task.targets[0]?.name ?? "them";
+  const moved = await transitionTask(
+    taskId,
+    planned.length ? "ready" : "planning",
+    {
+      wakeAt: null,
+      followUp: task.followUp?.reason === "retry" ? null : task.followUp,
+      statusDetail: planned.length ? `Calling ${name}` : `Calling ${name} back`,
+    },
+    ["scheduled"],
+  );
+  if (moved) kick(taskId);
+  return Boolean(moved);
+}
+
+/** reviewing → ready | planning | scheduled | needs_info | needs_approval | completed | failed. */
 async function review(task: TaskRow): Promise<boolean> {
   const user = (await getUser(task.userId))!;
   for (const call of (await listCalls(task.id)).filter((c) => c.kind === "business" && c.finishedAt && !c.analysis)) {
-    const analysis = await analyze(task, call);
+    const analysis = await analyze(task, call, user);
     const claimed = await db
       .update(calls)
       .set({ analysis, analyzedAt: new Date() })
@@ -553,11 +618,13 @@ async function review(task: TaskRow): Promise<boolean> {
     task: { title: fresh.title, goal: fresh.goal, request: fresh.request, category: fresh.category },
     constraints: fresh.constraints,
     authority: fresh.authority,
+    facts: fresh.facts.map((f) => ({ key: f.key, label: f.label, value: f.value, source: f.source })),
     calls: business
       .filter((c) => c.analysis)
       .map((c) => ({
         id: c.id,
         target: c.targetName,
+        direction: c.direction,
         purpose: c.purpose,
         attempt: c.attempt,
         status: c.status,
@@ -573,8 +640,20 @@ async function review(task: TaskRow): Promise<boolean> {
     await patchTask(task.id, { facts: mergeFacts(fresh.facts, d.learnedFacts.map((f) => ({ ...f, sensitive: false, source: "call" as const }))) });
   }
   const lastCall = business.filter((c) => c.analysis).at(-1);
-
   const latestConfirmation = business.filter((c) => c.analysis?.confirmationNumbers.length).at(-1)?.analysis?.confirmationNumbers.at(-1) ?? null;
+
+  // However the calls go, a task gets a bounded number of them.
+  const placed = business.filter((c) => c.direction === "outbound" && c.status !== "planned" && c.status !== "canceled").length;
+  if (["retry", "callback", "schedule"].includes(d.action) && placed >= config.calls.maxCallsPerTask) {
+    const where = lastCall?.analysis?.summary ?? "";
+    return finalize(
+      task.id,
+      "failed",
+      { outcome: "failed", summary: `Stopped after ${placed} calls. ${where}`.trim(), confirmation: latestConfirmation },
+      `I've made ${placed} calls on "${fresh.title}" without wrapping it up, so I'm stopping here. ${where}`.trim(),
+    );
+  }
+
   switch (d.action) {
     case "complete": {
       const result = d.result ?? { outcome: "success" as const, summary: d.userMessage, confirmation: null };
@@ -601,9 +680,11 @@ async function review(task: TaskRow): Promise<boolean> {
           amountCents: offer?.priceUsd != null ? Math.round(offer.priceUsd * 100) : undefined,
         },
       });
-      await notify({ userId: task.userId, taskId: task.id, kind: "approval", body: d.userMessage || prompt, dedupeKey: `q:${questionId}` });
+      await notify({ userId: task.userId, taskId: task.id, kind: "approval", body: approvalText(d.userMessage, prompt, options), dedupeKey: `q:${questionId}` });
       return false;
     }
+    case "ask_info":
+      return askForInfo(fresh, user, d, lastCall);
     case "next_call": {
       if (!remaining.length) return finalize(task.id, "completed", { outcome: "partial", summary: d.userMessage || "Finished the planned calls.", confirmation: null }, d.userMessage);
       const moved = await transitionTask(task.id, "ready", { statusDetail: `Next: ${remaining[0].targetName}`, followUp: null }, ["reviewing"]);
@@ -611,48 +692,213 @@ async function review(task: TaskRow): Promise<boolean> {
       return Boolean(moved);
     }
     case "retry": {
-      const failed = business.filter((c) => c.analysis && ["no_answer", "voicemail", "failed"].includes(c.analysis.outcome)).at(-1);
-      if (!failed || failed.attempt >= config.calls.maxAttemptsPerLeg) {
-        return finalize(task.id, "failed", { outcome: "failed", summary: `Couldn't reach ${failed?.targetName ?? "them"}.`, confirmation: null }, d.userMessage || `I couldn't reach ${failed?.targetName ?? "them"} after ${failed?.attempt ?? 1} tries. Want me to try again later?`);
+      // A "failed" call where someone spoke is one that dropped mid-conversation:
+      // that gets called straight back. Voicemail and no answer wait.
+      const dropped = (c: CallRow) => c.analysis?.outcome === "failed" && c.transcript.some((t) => t.speaker === "other");
+      const failed = business.filter((c) => c.analysis && UNREACHED.includes(c.analysis.outcome) && !dropped(c)).at(-1);
+      if (!failed) return callBack(fresh, d, lastCall);
+      if (failed.attempt >= config.calls.maxAttemptsPerLeg) {
+        return finalize(task.id, "failed", { outcome: "failed", summary: `Couldn't reach ${failed.targetName}.`, confirmation: null }, d.userMessage || `I couldn't reach ${failed.targetName} after ${failed.attempt} tries. Want me to try again later?`);
       }
-      await db.insert(calls).values({
-        id: newId("call"),
-        userId: task.userId,
-        taskId: task.id,
-        direction: "outbound",
-        kind: "business",
-        seq: failed.seq,
-        attempt: failed.attempt + 1,
+      await db
+        .insert(calls)
+        .values({
+          id: newId("call"),
+          userId: task.userId,
+          taskId: task.id,
+          direction: "outbound",
+          kind: "business",
+          seq: failed.seq,
+          attempt: failed.attempt + 1,
+          orgKey: failed.orgKey,
+          targetName: failed.targetName,
+          targetPhone: failed.targetPhone,
+          purpose: failed.purpose,
+          brief: failed.brief,
+          status: "planned",
+        })
+        .onConflictDoNothing();
+      // Not instantly: a business that didn't pick up rarely does ten seconds later.
+      const at = clampToCallingHours(new Date(Date.now() + config.calls.retryMinutes * 60_000), user.timezone);
+      const why = failed.analysis!.outcome === "voicemail" ? "went to voicemail" : failed.endReason === "busy" ? "was busy" : failed.analysis!.outcome === "failed" ? "didn't go through" : "didn't pick up";
+      return scheduleTask(fresh, at, { reason: "retry", userDecision: fresh.followUp?.userDecision ?? null, callback: null }, {
+        detail: `Trying ${failed.targetName} again ${formatWhen(at, user.timezone, { absolute: true })}`,
+        message: `${failed.targetName} ${why}. I'll try again ${formatWhen(at, user.timezone)}.`,
+        summary: `${failed.targetName} ${why}; trying again ${formatWhen(at, user.timezone, { absolute: true })}`,
         orgKey: failed.orgKey,
-        targetName: failed.targetName,
-        targetPhone: failed.targetPhone,
-        purpose: failed.purpose,
-        brief: failed.brief,
-        status: "planned",
-      }).onConflictDoNothing();
-      const moved = await transitionTask(task.id, "ready", { statusDetail: `Trying ${failed.targetName} again` }, ["reviewing"]);
-      if (moved && d.userMessage) await notify({ userId: task.userId, taskId: task.id, kind: "update", body: d.userMessage, dedupeKey: `retry:${failed.id}` });
-      return Boolean(moved);
+      });
     }
-    case "callback": {
-      const callback = d.callback ?? (lastCall ? { targetName: lastCall.targetName, purpose: "Follow up", objective: fresh.goal ?? fresh.request, talkingPoints: [] } : null);
+    case "callback":
+      return callBack(fresh, d, lastCall);
+    case "schedule": {
+      const callback = d.callback ?? defaultCallback(fresh, lastCall);
       if (!callback) return finalize(task.id, "failed", { outcome: "failed", summary: "Nothing to follow up on.", confirmation: null }, d.userMessage);
-      const moved = await transitionTask(
-        task.id,
-        "planning",
-        { followUp: { reason: "callback", userDecision: fresh.followUp?.userDecision ?? null, callback }, statusDetail: `Calling ${callback.targetName} back` },
-        ["reviewing"],
-      );
-      if (moved) {
-        await recordEvent({ userId: task.userId, taskId: task.id, orgKey: orgKeyFor(callback.targetName), type: "followup.required", summary: `Calling ${callback.targetName} back: ${callback.purpose}` });
-        if (d.userMessage) await notify({ userId: task.userId, taskId: task.id, kind: "update", body: d.userMessage, dedupeKey: `cb:${task.id}:${moved.version}` });
-      }
-      return Boolean(moved);
+      const { at, moved } = callbackTime(d.scheduleAt ?? lastCall?.analysis?.callbackAt, user.timezone);
+      const when = formatWhen(at, user.timezone);
+      // The model's text names its own time; if Telo had to move it, say the real one.
+      const message =
+        d.userMessage && d.scheduleAt && !moved
+          ? d.userMessage
+          : lastCall?.analysis?.outcome === "callback_required"
+            ? `${callback.targetName} asked me to call back later. I'll call them ${when}.`
+            : `I'll check back with ${callback.targetName} ${when}.`;
+      return scheduleTask(fresh, at, { reason: "callback", userDecision: fresh.followUp?.userDecision ?? null, callback }, {
+        detail: `Calling ${callback.targetName} back ${formatWhen(at, user.timezone, { absolute: true })}`,
+        message,
+        summary: `Call ${callback.targetName} back ${formatWhen(at, user.timezone, { absolute: true })}: ${callback.purpose}`,
+        orgKey: orgKeyFor(callback.targetName),
+      });
     }
   }
 }
 
-async function analyze(task: TaskRow, call: CallRow): Promise<CallAnalysis> {
+/**
+ * The text for a decision. Over SMS or a phone call there are no buttons, so
+ * it must end by actually asking (the model sometimes explains the offer and
+ * leaves the question to the options).
+ */
+export function approvalText(message: string, prompt: string, options: ApprovalOption[]): string {
+  const text = (message || prompt).trim();
+  if (text.includes("?")) return text;
+  if (prompt.includes("?") && !text.includes(prompt.trim())) return `${text} ${prompt.trim()}`;
+  return options.length ? `${text} ${options.map((o) => o.label).join(", or ")}?` : text;
+}
+
+function defaultCallback(task: TaskRow, lastCall: CallRow | undefined): FollowUp["callback"] {
+  if (!lastCall) return null;
+  return {
+    targetName: lastCall.targetName,
+    purpose: "Follow up",
+    objective: task.goal ?? task.request,
+    talkingPoints: lastCall.analysis?.nextStep ? [lastCall.analysis.nextStep] : [],
+  };
+}
+
+/** reviewing → planning: call the business again now, with what Telo learned. */
+async function callBack(task: TaskRow, d: DecideResult, lastCall: CallRow | undefined): Promise<boolean> {
+  const callback = d.callback ?? defaultCallback(task, lastCall);
+  if (!callback) return finalize(task.id, "failed", { outcome: "failed", summary: "Nothing to follow up on.", confirmation: null }, d.userMessage);
+  const moved = await transitionTask(
+    task.id,
+    "planning",
+    { followUp: { reason: "callback", userDecision: task.followUp?.userDecision ?? null, callback }, statusDetail: `Calling ${callback.targetName} back` },
+    ["reviewing"],
+  );
+  if (moved) {
+    await recordEvent({ userId: task.userId, taskId: task.id, orgKey: orgKeyFor(callback.targetName), type: "followup.required", summary: `Calling ${callback.targetName} back: ${callback.purpose}` });
+    if (d.userMessage) await notify({ userId: task.userId, taskId: task.id, kind: "update", body: d.userMessage, dedupeKey: `cb:${task.id}:${moved.version}` });
+  }
+  return Boolean(moved);
+}
+
+/** reviewing → scheduled: park the task until `at`; the background loop wakes it. */
+async function scheduleTask(
+  task: TaskRow,
+  at: Date,
+  followUp: FollowUp,
+  note: { detail: string; message: string; summary: string; orgKey: string | null },
+): Promise<boolean> {
+  const moved = await transitionTask(task.id, "scheduled", { wakeAt: at, followUp, statusDetail: note.detail }, ["reviewing"]);
+  if (!moved) return false;
+  await recordEvent({
+    userId: task.userId,
+    taskId: task.id,
+    orgKey: note.orgKey ?? task.orgKey,
+    type: "followup.required",
+    summary: note.summary,
+    data: { wakeAt: at.toISOString(), reason: followUp.reason },
+  });
+  await notify({ userId: task.userId, taskId: task.id, kind: "update", body: note.message, dedupeKey: `sched:${task.id}:${moved.version}` });
+  return false; // nothing to do until then
+}
+
+/**
+ * "phone_comcast" → the task's target it names. Generic keys ("phone_number",
+ * "phone_mobile") name nobody: that's usually the user's own number, and must
+ * never become a business's.
+ */
+export function phoneTarget(key: string, task: Pick<TaskRow, "targets">): string | null {
+  const rest = key.replace(/^phone[_-]?/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const exact = task.targets.find((t) => orgKeyFor(t.name) === rest);
+  if (exact) return exact.name;
+  if (!rest || /^(number|mobile|cell|callback|call-back|contact|home|work|user|customer|your|my|best|direct|main|personal)(-|$)/.test(rest)) return null;
+  const flat = (k: string) => k.replace(/-/g, "");
+  return (
+    task.targets.find((t) => {
+      const k = flat(orgKeyFor(t.name));
+      return k === flat(rest) || (flat(rest).length >= 4 && (k.startsWith(flat(rest)) || flat(rest).startsWith(k)));
+    })?.name ?? null
+  );
+}
+
+/** reviewing → needs_info: the business needs a detail only the user has, or the number was wrong. */
+async function askForInfo(task: TaskRow, user: UserRow, d: DecideResult, lastCall: CallRow | undefined): Promise<boolean> {
+  const targetName = d.callback?.targetName ?? lastCall?.targetName ?? task.targets[0]?.name ?? "the business";
+  const asked = d.infoFields.length
+    ? d.infoFields
+    : (lastCall?.analysis?.infoRequested ?? []).map((r) => ({
+        key: r.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""),
+        label: r.label,
+        question: `What's the ${r.label.toLowerCase()}?`,
+        sensitive: true,
+      }));
+  const secrets = asked.filter((f) => SECRET_FIELD.test(`${f.key} ${f.label} ${f.question}`));
+  const fields: InfoField[] = [];
+  for (const f of asked) {
+    if (secrets.includes(f)) continue;
+    const key = /^phone/i.test(f.key) ? `phone_${orgKeyFor(phoneTarget(f.key, task) ?? targetName)}` : f.key;
+    if (!fields.some((x) => x.key === key)) fields.push({ ...f, key, required: true });
+  }
+  if (!fields.length) {
+    // Only things Telo never handles (a PIN, a password): the user has to deal with them directly.
+    const what = secrets.map((f) => f.label.toLowerCase()).join(" and ") || "a detail only you can give them";
+    return finalize(
+      task.id,
+      "failed",
+      { outcome: "failed", summary: `${targetName} needs ${what} from you directly.`, confirmation: null },
+      `${targetName} won't go further without ${what}. I never ask for or share that, so you'll need to call them for this part.`,
+    );
+  }
+
+  // A wrong number is dropped so nothing dials it again.
+  const phoneKeys = fields.filter((f) => f.key.startsWith("phone_")).map((f) => f.key.slice("phone_".length));
+  const targets = task.targets.map((t) => (phoneKeys.includes(orgKeyFor(t.name)) ? { ...t, phone: null } : t));
+  if (lastCall?.targetPhone) {
+    for (const key of phoneKeys) {
+      await db.update(organizations).set({ phone: null }).where(and(eq(organizations.key, key), eq(organizations.phone, lastCall.targetPhone)));
+    }
+  }
+
+  const labels = fields.map((f) => f.label).join(", ");
+  // If something secret was dropped, the model's text may still ask for it: write our own.
+  const prompt = (!secrets.length && d.userMessage) || `${targetName} needs ${fields.map((f) => f.label.toLowerCase()).join(" and ")} to keep going. ${fields.map((f) => f.question).join(" ")}`;
+  const questionId = await createQuestion(task, "info", prompt, fields, [], { callId: lastCall?.id ?? null });
+  const callback = d.callback ?? {
+    targetName,
+    purpose: phoneKeys.length ? `Call ${targetName} at the right number` : `Give ${targetName} the details they asked for`,
+    objective: task.goal ?? task.request,
+    talkingPoints: [],
+  };
+  // "Call back during business hours with it": an answer that arrives before then waits for that time.
+  const later = d.scheduleAt ?? lastCall?.analysis?.callbackAt;
+  const moved = await transitionTask(
+    task.id,
+    "needs_info",
+    {
+      targets,
+      followUp: { reason: "callback", userDecision: task.followUp?.userDecision ?? null, callback },
+      wakeAt: later ? callbackTime(later, user.timezone).at : null,
+      statusDetail: `Waiting on you: ${labels}`,
+    },
+    ["reviewing"],
+  );
+  if (!moved) return false;
+  await recordEvent({ userId: task.userId, taskId: task.id, orgKey: orgKeyFor(targetName), type: "task.info_requested", summary: `${targetName} asked for: ${labels}` });
+  await notify({ userId: task.userId, taskId: task.id, kind: "question", body: prompt, dedupeKey: `q:${questionId}` });
+  return false;
+}
+
+async function analyze(task: TaskRow, call: CallRow, user: UserRow): Promise<CallAnalysis> {
   const empty = {
     facts: [],
     offers: [],
@@ -662,22 +908,24 @@ async function analyze(task: TaskRow, call: CallRow): Promise<CallAnalysis> {
     repName: null,
     quote: null,
     decisionNeeded: null,
+    callbackAt: null,
+    infoRequested: [],
   };
+  if (call.status === "canceled") return { ...empty, outcome: "failed", summary: "The call was cancelled.", nextStep: "None." };
+  // Anyone who spoke gets read by the model, including a call that dropped halfway.
   const spoke = call.transcript.some((t) => t.speaker === "other");
-  if (!spoke || call.status === "failed" || call.status === "canceled") {
+  if (!spoke) {
     const reason = call.endReason ?? "";
-    if (reason === "no-answer" || reason === "busy" || (!spoke && call.status === "ended")) {
+    if (reason === "no-answer" || reason === "busy" || call.status === "ended") {
       return { ...empty, outcome: "no_answer", summary: reason === "busy" ? "The line was busy." : "Nobody picked up.", nextStep: "Try again." };
     }
-    return {
-      ...empty,
-      outcome: "failed",
-      summary: call.status === "canceled" ? "The call was cancelled." : `The call didn't go through${call.statusDetail ? ` (${call.statusDetail})` : ""}.`,
-      nextStep: "Decide whether to retry.",
-    };
+    return { ...empty, outcome: "failed", summary: `The call didn't go through${call.statusDetail ? ` (${call.statusDetail})` : ""}.`, nextStep: "Decide whether to retry." };
   }
   return agent.analyzeCall({
+    now: now(user),
+    direction: call.direction,
     task: { title: task.title, goal: task.goal },
+    agentWasGiven: call.direction === "outbound" ? shareableDetails(user.name, call.brief, task.facts) : null,
     leg: call.brief,
     transcript: call.transcript,
     endReason: call.endReason,
@@ -796,11 +1044,14 @@ async function finalize(taskId: string, status: Extract<TaskStatus, "completed" 
       completedAt: new Date(),
       statusDetail: status === "completed" ? "Done" : "Stopped",
       followUp: null,
+      wakeAt: null,
       facts: task.facts.map(redactFact), // temporary task context: sensitive values aren't kept after the task
     },
     [task.status],
   );
   if (!moved) return false;
+  // A retry that was queued but is no longer needed (they called back first, say).
+  await db.update(calls).set({ status: "canceled", finishedAt: new Date() }).where(and(eq(calls.taskId, taskId), eq(calls.status, "planned")));
   await recordEvent({
     userId: task.userId,
     taskId,
@@ -823,7 +1074,7 @@ async function finalize(taskId: string, status: Extract<TaskStatus, "completed" 
 export async function cancelTask(taskId: string, reason: string): Promise<boolean> {
   const task = await getTask(taskId);
   if (!task) return false;
-  const moved = await transitionTask(taskId, "cancelled", { statusDetail: "Cancelled", completedAt: new Date(), result: { outcome: "cancelled", summary: reason, confirmation: null }, facts: task.facts.map(redactFact) });
+  const moved = await transitionTask(taskId, "cancelled", { statusDetail: "Cancelled", completedAt: new Date(), wakeAt: null, result: { outcome: "cancelled", summary: reason, confirmation: null }, facts: task.facts.map(redactFact) });
   if (!moved) return false;
   for (const c of await listCalls(taskId)) {
     if (c.status === "planned") await db.update(calls).set({ status: "canceled", finishedAt: new Date() }).where(eq(calls.id, c.id));

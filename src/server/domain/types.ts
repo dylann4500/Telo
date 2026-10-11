@@ -10,6 +10,7 @@ export const TASK_STATUSES = [
   "calling", // a call is in progress
   "reviewing", // reading the finished call and deciding what's next
   "needs_approval", // the business offered something the user must decide
+  "scheduled", // waiting until wakeAt to call (a callback the business asked for, or a delayed retry)
   "completed",
   "failed",
   "cancelled",
@@ -75,7 +76,7 @@ export interface MemoryBrief {
 }
 
 export interface FollowUp {
-  reason: "user_decision" | "callback";
+  reason: "user_decision" | "callback" | "retry";
   userDecision: string | null; // e.g. "Keep cancelling (user said: no retention offers)"
   callback: { targetName: string; purpose: string; objective: string; talkingPoints: string[] } | null;
 }
@@ -129,6 +130,10 @@ export interface CallAnalysis {
   repName: string | null;
   quote: { priceUsd: number | null; availability: string | null; notes: string | null } | null;
   decisionNeeded: { question: string; options: { id: string; label: string }[] } | null;
+  // When the business asked to be called back ("in 3 days", "after 2pm Thursday").
+  callbackAt: string | null;
+  // Things the business asked for that Telo couldn't provide.
+  infoRequested: { label: string; reason: string }[];
   nextStep: string;
 }
 

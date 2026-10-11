@@ -10,7 +10,7 @@ import { Thread } from "./thread";
 import { Logo, ModeChips, SectionTitle, formatPhone } from "./ui";
 
 const NEEDS_YOU = ["needs_info", "needs_approval"];
-const WORKING = ["new", "planning", "ready", "calling", "reviewing"];
+const WORKING = ["new", "planning", "ready", "calling", "reviewing", "scheduled"];
 
 export function Home() {
   const { data, mutate, error } = useAppState();

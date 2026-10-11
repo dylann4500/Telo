@@ -21,6 +21,40 @@ export interface StructuredRequest<S extends z.ZodType> {
 // Server-side refusal fallback exists for these families only (not Haiku).
 const SUPPORTS_FALLBACK = /^claude-(opus|sonnet|fable)/;
 
+type JsonSchema = { [key: string]: unknown };
+
+/**
+ * The SDK's schema transform keeps only a few keywords and folds the rest
+ * into the description, so `enum` reaches the API as a hint
+ * ("{enum: [...]}") rather than a constraint, and the model can answer
+ * outside it (seen live: a decide result with an outcome not in the list).
+ * Structured outputs do enforce `enum`, so put it back.
+ */
+export function restoreEnums(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(restoreEnums);
+  if (!node || typeof node !== "object") return node;
+  const out: JsonSchema = {};
+  for (const [k, v] of Object.entries(node as JsonSchema)) out[k] = restoreEnums(v);
+  const description = typeof out.description === "string" ? out.description : null;
+  const m = description?.match(/(?:\n\n)?\{enum: (\[[^\]]*\])\}$/);
+  if (description && m) {
+    try {
+      out.enum = JSON.parse(m[1]);
+      const rest = description.slice(0, m.index).trim();
+      if (rest) out.description = rest;
+      else delete out.description;
+    } catch {
+      // leave the hint as it was
+    }
+  }
+  return out;
+}
+
+function outputFormat<S extends z.ZodType>(schema: S) {
+  const format = betaZodOutputFormat(schema);
+  return { ...format, schema: restoreEnums(format.schema) as typeof format.schema };
+}
+
 /**
  * Telo's only dependency on a model provider. Every call returns data that
  * has already been validated against a zod schema, so free-form model prose
@@ -45,7 +79,7 @@ class AnthropicLLM implements LLM {
       max_tokens: req.maxTokens ?? 8000,
       system: req.system,
       messages: [{ role: "user", content: req.prompt }],
-      output_config: { format: betaZodOutputFormat(req.schema), effort: req.effort ?? "medium" },
+      output_config: { format: outputFormat(req.schema), effort: req.effort ?? "medium" },
       // If a safety classifier declines, the API retries on a fallback model
       // inside the same request instead of failing the task.
       ...(SUPPORTS_FALLBACK.test(model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),

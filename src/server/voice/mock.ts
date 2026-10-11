@@ -13,8 +13,9 @@ interface SimCall {
   cancelled: boolean;
 }
 
-const g = globalThis as unknown as { __teloMockCalls?: Map<string, SimCall>; __teloMockInbound?: string };
+const g = globalThis as unknown as { __teloMockCalls?: Map<string, SimCall>; __teloMockInbound?: string; __teloMockCounts?: Map<string, number> };
 const calls = (g.__teloMockCalls ??= new Map());
+const callCounts = (g.__teloMockCounts ??= new Map()); // calls each business has received
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms / Math.max(0.1, config.demo.mockSpeed)));
 
@@ -25,17 +26,22 @@ async function emit(event: VoiceEvent) {
 
 async function scriptFor(business: string, instructions: string): Promise<SimTurn[] | "no_answer"> {
   const scenario = scenarioFor(business);
+  const callNumber = (callCounts.get(business.toLowerCase()) ?? 0) + 1;
+  callCounts.set(business.toLowerCase(), callNumber);
+  const persona = typeof scenario.persona === "function" ? scenario.persona(callNumber) : scenario.persona;
+  if (persona === null) return "no_answer";
+  if (Array.isArray(persona)) return persona;
   if (config.llm.provider === "anthropic") {
     try {
       const { simulateCall } = await import("../agent");
-      const sim = await simulateCall({ business, instructions, scenario: scenario.persona });
+      const sim = await simulateCall({ business, instructions, scenario: persona });
       if (sim.outcome !== "answered") return "no_answer";
       if (sim.turns.length) return sim.turns;
     } catch (err) {
       console.warn("[mock] role-play failed, using the canned script", err);
     }
   }
-  return scenario.script({ user: config.user.name, business, instructions });
+  return scenario.script({ user: config.user.name, business, instructions, callNumber });
 }
 
 function businessFrom(instructions: string): string {

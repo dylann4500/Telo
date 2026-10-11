@@ -9,6 +9,7 @@ export type TaskStatus =
   | "calling"
   | "reviewing"
   | "needs_approval"
+  | "scheduled"
   | "completed"
   | "failed"
   | "cancelled";
@@ -54,6 +55,8 @@ export interface TaskSummaryDTO {
   result: { outcome: string; summary: string; confirmation: string | null } | null;
   memoryUsed: boolean;
   callsMade: number;
+  /** When a scheduled task will call next. */
+  wakeAt: string | null;
 }
 
 export interface MessageDTO {

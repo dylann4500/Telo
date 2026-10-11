@@ -77,6 +77,8 @@ export const tasks = sqliteTable(
     followUp: text("follow_up", { mode: "json" }).$type<FollowUp | null>(),
     version: integer("version").notNull().default(0),
     stepFailures: integer("step_failures").notNull().default(0),
+    wakeAt: integer("wake_at", { mode: "timestamp_ms" }), // for status "scheduled"
+
     lastError: text("last_error"),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: createdAt(),

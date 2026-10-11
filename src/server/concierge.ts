@@ -7,8 +7,9 @@ import type { Channel, Fact } from "./domain/types";
 import { newId, orgKeyFor } from "./ids";
 import { recordEvent } from "./memory/events";
 import { notify, withVoiceCapture } from "./notify";
-import { advance, cancelTask, normalizePhone } from "./orchestrator";
+import { advance, cancelTask, normalizePhone, phoneTarget, wakeTask } from "./orchestrator";
 import { containsSecret, maskSecrets } from "./redact";
+import { formatWhen, nowContext } from "./time";
 import { answerStatus } from "./status";
 import { getCall, getTask, getUser, getUserByPhone, listActiveTasks, listRecentTasks, openQuestion, recentMessages, transitionTask } from "./tasks/repo";
 
@@ -108,7 +109,7 @@ export async function handleUserInput(input: {
   const route = await agent.routeInbound({
     text: maskSecrets(input.text),
     via,
-    now: new Date().toISOString(),
+    now: nowContext(user.timezone),
     openTasks,
     recentConversation: recent,
     alreadyHandled: input.alreadyHandled,
@@ -162,8 +163,12 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       const incoming: Fact[] = action.answers
         .filter((a) => a.value?.trim())
         .map((a) => {
-          const f = fields.find((x) => x.key === a.key);
-          return { key: a.key, label: f?.label ?? a.key, value: a.value.trim(), sensitive: f?.sensitive ?? false, source: "user" as const };
+          // "phone_golden_crust", "phone_goldencrust"... → the target's exact key.
+          const target = /^phone/i.test(a.key) ? phoneTarget(a.key, task) : null;
+          const key = target ? `phone_${orgKeyFor(target)}` : a.key;
+          const f = fields.find((x) => x.key === key);
+          const label = f?.label ?? (target ? `${target}'s number` : key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()));
+          return { key, label, value: a.value.trim(), sensitive: f?.sensitive ?? /account|member|birth|email|address|ssn|card/i.test(key), source: "user" as const };
         });
       // A number for one of the businesses updates the target and the directory.
       const targets = task.targets.map((t) => {
@@ -185,7 +190,16 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
           .set({ status: "answered", answeredAt: new Date(), answer: { keys: incoming.map((f) => f.key) } })
           .where(eq(questions.id, q.id));
       }
-      const moved = await transitionTask(task.id, "new", { facts, targets, statusDetail: "Got your answer" }, ["needs_info"]);
+      // Mid-task (a business asked for this), go back to calling: now, or at
+      // the time the business gave. Before the first call, re-read the request.
+      const who = task.followUp?.callback?.targetName;
+      const later = task.followUp && task.wakeAt && task.wakeAt.getTime() > Date.now() + 60_000 ? task.wakeAt : null;
+      const moved = await transitionTask(
+        task.id,
+        !task.followUp ? "new" : later ? "scheduled" : "planning",
+        { facts, targets, statusDetail: later ? `Calling ${who ?? "them"} back ${formatWhen(later, user.timezone, { absolute: true })}` : "Got your answer" },
+        ["needs_info"],
+      );
       if (!moved) return;
       await recordEvent({
         userId: user.id,
@@ -194,6 +208,9 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
         type: "task.info_received",
         summary: `You told me: ${incoming.map((f) => f.label).join(", ") || "more details"}`,
       });
+      // Mid-task, the next thing the user would otherwise hear is the result, minutes later.
+      if (who && later) await reply(`Thanks. I'll call ${who} back ${formatWhen(later, user.timezone)} with that.`, task.id);
+      else if (who) await reply(incoming.some((f) => f.key.startsWith("phone_")) ? `Thanks. Calling ${who} at that number now.` : `Thanks. Calling ${who} back with that now.`, task.id);
       await advance(task.id);
       return;
     }
@@ -221,6 +238,13 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       return;
     }
     case "retry_task": {
+      // "Call them now" for a call Telo scheduled for later.
+      const scheduled = active.find((t) => t.status === "scheduled" && (!action.taskId || t.id === action.taskId));
+      if (scheduled) {
+        const who = scheduled.followUp?.callback?.targetName ?? scheduled.targets[0]?.name ?? "them";
+        if (await wakeTask(scheduled.id)) await reply(`Calling ${who} now.`, scheduled.id);
+        return;
+      }
       const failed = (await listRecentTasks(user.id, 5)).find((t) => t.id === action.taskId || t.status === "failed");
       if (!failed || failed.status !== "failed") {
         await reply("There's nothing to retry right now.");
