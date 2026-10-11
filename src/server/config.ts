@@ -22,7 +22,7 @@ export const config = {
     id: "usr_default",
     name: env("TELO_USER_NAME") ?? "Dylan",
     phone: env("TELO_USER_PHONE") ?? null,
-    channel: pick("TELO_USER_CHANNEL", ["sms", "imessage", "whatsapp", "web"] as const, "sms"),
+    channel: pick("TELO_USER_CHANNEL", ["sms", "imessage", "whatsapp", "voice", "web"] as const, "sms"),
     timezone: env("TELO_TIMEZONE") ?? "America/Los_Angeles",
   },
 
