@@ -25,23 +25,24 @@ The seeded portfolio (`src/server/portfolio/data.ts`) has two owners, three prop
 - [ ] Updates on **Text + call** in the thread header. Until the number's 10DLC registration clears, Telo's texts to US phones may be blocked, so test texting to each cast phone first. Every message also shows on the dashboard.
 - [ ] A quiet room for the vendor teammates (Dial's agent stops talking at background noise).
 
-## 1. A tenant texts (7 PM)
+## 1. A tenant calls or texts (7 PM)
 
-Maria texts Telo's number: **"The AC is out again. It's blowing warm air and it's 85 in here."** She attaches two photos (the thermostat and the outdoor unit).
+Maria calls Telo's number: **"The AC is out again. It's blowing warm air and it's 85 in here."** Telo answers with the disclosure ("the AI assistant for Bayside Property Management; this call is recorded"), asks what's wrong and how bad, and says it will text her. Or she texts the same thing with two photos (the thermostat and the outdoor unit).
 
-- Telo replies to Maria that it's lining up a vendor. With no photos, it asks for them.
+- Telo texts Maria that it's lining up a vendor. With no photos yet, it asks for them, and she texts them back.
 - The manager gets one text: the new work order, and why Telo is calling whom.
+- The dashboard: the work order appears on the board under **New & calling**.
 
 ## 2. Memory picks who to call
 
-On the work order's page, **What Telo remembered** shows the decision and the live Keewano queries behind it, with rows and milliseconds:
+On the work order's page, the **flowchart** shows each step as it happens (report, triage, Keewano, the calls side by side, owner approval, booking, entry notice, follow-up, close). **What Telo remembered** shows the decision and the live Keewano queries behind it, with rows and milliseconds:
 
 - This is Unit B's **third AC failure since June** ($550 in repairs; the AC is 15 years old). So Telo also asks for a **replacement price**.
 - **CoolBreeze HVAC**, the usual vendor, **no-showed twice**. So Telo calls Summit Mechanical and Rapid Air instead.
 
 ## 3. Two calls at once
 
-Both vendors' phones ring together. Telo opens: "I'm an AI assistant calling for Dylan at Bayside Property Management; this call is recorded."
+Both vendors' phones ring together, and the dashboard's **On the phone now** strip shows both calls side by side with live transcripts. Telo opens: "I'm an AI assistant calling for Dylan at Bayside Property Management; this call is recorded."
 
 - **Summit (Dana):** "Earliest is Thursday, 9 to 11. The diagnostic is $180, plus our $79 trip fee."
 - **Rapid Air (Luis):** "We can do tonight between 8 and 9. It's likely the capacitor and contactor: $650, all in."
@@ -53,7 +54,7 @@ $650 is over Priya's $500 limit. Telo tells Luis "One moment, I'm checking with 
 
 - Priya replies: **"Yes, approve it. And get a replacement quote too."**
 - Telo tells Luis on the same call. Luis: "You're booked tonight between 8 and 9. Marco will bring a replacement quote. Confirmation RA2231."
-- The dashboard's live card shows the question and a timer while Luis waits. The manager can also answer there.
+- On the dashboard, the work order moves to **Waiting on someone**, and Rapid Air's live tile shows the question and a timer while Luis waits. The manager can also answer there.
 
 ## 5. Booked: the window, the notice, a polite no
 
@@ -65,7 +66,7 @@ $650 is over Priya's $500 limit. Telo tells Luis "One moment, I'm checking with 
 
 Thirty minutes into the window, Telo texts Rapid Air "is your tech on the way?" and Maria "did they fix it? Reply Y or N". On stage, press **Check now** on the work order to skip the wait.
 
-- Maria replies **"Y"**. Telo marks Rapid Air's arrival promise **kept** and closes the work order: fixed on the first visit, confirmed by the tenant, and **zero manager touches**. Seeded jobs from before Telo averaged 6.6 touches and 2.6 days to fix.
+- Maria replies **"Y"**. Telo marks Rapid Air's arrival promise **kept** and closes the work order: fixed on the first visit, confirmed by the tenant, and **zero manager touches**. The dashboard's **Manager touches per job** tile shows it: 6.6 for the seeded jobs from before Telo (2.6 days to fix), 0 with Telo.
 
 ## 7. A judge asks anything
 
@@ -88,7 +89,7 @@ A tenant texts **"I smell gas in the kitchen."** Telo texts back the safety inst
 Everything above runs on the simulated stack (no keys): the `telo-sim` profile in `.claude/launch.json`, or `npm run dev` without keys. Summit's and Rapid Air's lines are scripted. In the dashboard's **Demo controls**:
 
 1. **Load the portfolio's history**
-2. **Maria (tenant): AC is out, 2 photos**
+2. **Maria calls: AC is out** (then **Maria (tenant): AC is out, 2 photos** sends the photos), or just the text with photos
 3. When Rapid Air is waiting on the line: **Priya (owner): yes, and get a replacement quote** (or answer in the live card)
 4. **Maria: YES to entry**
 5. **Check now** on the work order's page, then **Maria: Y, it's fixed**
@@ -98,4 +99,5 @@ Without Keewano keys, the same decisions come from Telo's local copy of the even
 ## What's honest to say
 
 - The history before today is seeded, and it's labeled as seeded on slides. Everything Telo does during the demo is recorded live, on the same streams.
-- Tenants report by text today, photos included. Calls from tenants are next on the list.
+- Tenants report by phone or by text; photos come by text.
+- The before-and-after numbers compare seeded history with Telo's own jobs, all from the same work-order events.
