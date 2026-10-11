@@ -10,7 +10,8 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/tasks/[id]/wak
   const task = await getTask(id);
   if (!task) return Response.json({ error: "not found" }, { status: 404 });
   const ok = await wakeTask(id);
+  // A booked work order runs its follow-up ("on the way?", "fixed?"); the texts themselves are the update.
   const who = task.followUp?.callback?.targetName ?? task.targets[0]?.name ?? "them";
-  if (ok) await notify({ userId: task.userId, taskId: id, kind: "reply", body: `Calling ${who} now.`, channel: "web" });
+  if (ok && task.context?.kind !== "maintenance") await notify({ userId: task.userId, taskId: id, kind: "reply", body: `Calling ${who} now.`, channel: "web" });
   return Response.json({ ok });
 }
