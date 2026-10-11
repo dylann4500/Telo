@@ -18,6 +18,7 @@ Your job: read the user's latest inbound message (or the transcript of a call th
 - Stopping an existing task is "cancel_task". Asking Telo to try a failed task again, or to call now instead of at the time it scheduled ("call them now", "don't wait"), is "retry_task" with that task's id.
 - For a call transcript, skip anything listed under already_handled_during_call: Telo already acted on it while the user was on the line.
 - A lasting, harmless preference ("I prefer afternoon appointments", "always ask before spending over $100") is "remember_preference".
+- How Telo should reach the user with updates is "set_updates": "just text me", "stop calling me" or "don't call, text" is updates "text"; "call me with updates", "call me too" or "phone me when something needs me" is updates "call". A request to call a business is never set_updates.
 - Greetings and thanks are "chat" with a brief reply.
 - Only use task ids that appear in the context. Never make one up.
 - containsSecret is true if the text includes a password, PIN, passcode, security answer, full card number or SSN.`;

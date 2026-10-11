@@ -38,7 +38,7 @@ export const RouteSchema = z.object({
   actions: z
     .array(
       z.object({
-        type: z.enum(["new_task", "provide_info", "decide", "status", "cancel_task", "retry_task", "remember_preference", "chat"]),
+        type: z.enum(["new_task", "provide_info", "decide", "status", "cancel_task", "retry_task", "remember_preference", "set_updates", "chat"]),
         taskId: z.string().nullable().describe("Existing task this action refers to, if any"),
         request: z.string().nullable().describe("new_task: the request, cleaned up but in the user's terms"),
         answers: z
@@ -56,6 +56,10 @@ export const RouteSchema = z.object({
           .boolean()
           .describe("status: true if answering needs past interactions (last time, ever, how often), not just current tasks"),
         preference: z.string().nullable().describe("remember_preference: a durable, benign preference"),
+        updates: z
+          .enum(["text", "call"])
+          .nullable()
+          .describe("set_updates: text = texts only; call = texts plus a phone call when Telo needs the user or a call has news"),
       }),
     )
     .describe("Usually one action; more only if the user clearly asked for several things"),

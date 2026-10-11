@@ -23,7 +23,7 @@ import type { DecideResult } from "./agent/schemas";
 import { newId, orgKeyFor } from "./ids";
 import { relationshipHistory } from "./memory";
 import { recordEvent } from "./memory/events";
-import { notify } from "./notify";
+import { notify, type MessageKind } from "./notify";
 import { maskSecrets, redactFact } from "./redact";
 import { getTask, getUser, listCalls, listOrganizations, listRecentTasks, patchTask, transitionTask } from "./tasks/repo";
 import { clampToCallingHours, formatWhen, nextWeekdayMorning, nowContext } from "./time";
@@ -778,11 +778,14 @@ async function review(task: TaskRow): Promise<boolean> {
           : lastCall?.analysis?.outcome === "callback_required"
             ? `${callback.targetName} asked me to call back later. I'll call them ${when}.`
             : `I'll check back with ${callback.targetName} ${when}.`;
+      // What the business said is news for the user (a call with calls on); a parked task without one isn't.
+      const heardBack = Boolean(lastCall?.analysis) && !UNREACHED.includes(lastCall!.analysis!.outcome) && lastCall!.analysis!.outcome !== "wrong_number";
       return scheduleTask(fresh, at, { reason: "callback", userDecision: fresh.followUp?.userDecision ?? null, callback }, {
         detail: `Calling ${callback.targetName} back ${formatWhen(at, user.timezone, { absolute: true })}`,
         message,
         summary: `Call ${callback.targetName} back ${formatWhen(at, user.timezone, { absolute: true })}: ${callback.purpose}`,
         orgKey: orgKeyFor(callback.targetName),
+        kind: heardBack ? "report" : "update",
       });
     }
   }
@@ -832,7 +835,7 @@ async function scheduleTask(
   task: TaskRow,
   at: Date,
   followUp: FollowUp,
-  note: { detail: string; message: string; summary: string; orgKey: string | null },
+  note: { detail: string; message: string; summary: string; orgKey: string | null; kind?: MessageKind },
 ): Promise<boolean> {
   const moved = await transitionTask(task.id, "scheduled", { wakeAt: at, followUp, statusDetail: note.detail }, ["reviewing"]);
   if (!moved) return false;
@@ -844,7 +847,7 @@ async function scheduleTask(
     summary: note.summary,
     data: { wakeAt: at.toISOString(), reason: followUp.reason },
   });
-  await notify({ userId: task.userId, taskId: task.id, kind: "update", body: note.message, dedupeKey: `sched:${task.id}:${moved.version}` });
+  await notify({ userId: task.userId, taskId: task.id, kind: note.kind ?? "update", body: note.message, dedupeKey: `sched:${task.id}:${moved.version}` });
   return false; // nothing to do until then
 }
 

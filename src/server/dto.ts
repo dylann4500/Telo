@@ -67,7 +67,14 @@ export async function buildState(userId: string): Promise<StateDTO> {
       calendar: config.calendar.provider,
       devTools: config.demo.devTools,
     },
-    user: { name: user?.name ?? config.user.name, phone: user?.phone ?? null, channel: user?.channel ?? config.user.channel },
+    user: {
+      name: user?.name ?? config.user.name,
+      phone: user?.phone ?? null,
+      channel: user?.channel ?? config.user.channel,
+      callUpdates: user?.callUpdates ?? config.user.callUpdates,
+      // The latest text to the user didn't arrive (carriers block an unregistered number).
+      textsFailing: msgRows.find((m) => m.direction === "out" && ["sms", "imessage", "whatsapp"].includes(m.channel))?.status === "failed",
+    },
     teloPhone: config.voice.teloPhone,
     tasks: taskRows.map((t) =>
       summary(

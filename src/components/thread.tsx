@@ -1,9 +1,9 @@
 "use client";
 
 import clsx from "clsx";
-import { ArrowUp, Mail, Phone } from "lucide-react";
+import { ArrowUp, Mail, MessageSquare, Phone } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { MessageDTO, TaskSummaryDTO } from "@/lib/types";
+import type { MessageDTO, StateDTO, TaskSummaryDTO } from "@/lib/types";
 import { post } from "./api";
 
 // The conversation with Telo, drawn like the Messages app: this is the same
@@ -37,12 +37,14 @@ export function Thread({
   onSent,
   teloPhone,
   liveLine,
+  user,
 }: {
   messages: MessageDTO[];
   tasks: TaskSummaryDTO[];
   onSent: () => void;
   teloPhone: string | null;
   liveLine: boolean;
+  user?: StateDTO["user"];
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -52,19 +54,21 @@ export function Thread({
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [last]);
 
+  // A text that Telo also delivered by phone (calls on) shows once, as the call.
+  const textFor = new Map<string, MessageDTO>(); // the phoned-in copy's id -> the text it repeats
+  messages.forEach((m, i) => {
+    if (m.direction !== "out" || m.channel === "voice" || m.channel === "web") return;
+    const copy = messages.slice(i + 1, i + 4).find((n) => n.direction === "out" && n.channel === "voice" && n.body === m.body);
+    if (copy) textFor.set(copy.id, m);
+  });
+  const hidden = new Set([...textFor.values()].map((m) => m.id));
+  const visible = messages.filter((m) => !hidden.has(m.id));
   // Quick replies go under the newest message that asked for a decision.
   const waiting = new Map(tasks.filter((t) => t.waiting?.kind === "approval").map((t) => [t.id, t]));
   const lastAsk = new Map<string, number>();
-  messages.forEach((m, i) => {
+  visible.forEach((m, i) => {
     if (m.direction === "out" && m.taskId && waiting.has(m.taskId) && (m.kind === "approval" || m.kind === "question")) lastAsk.set(m.taskId, i);
   });
-  // A text that failed and was then delivered by a phone call shows once.
-  const phonedIn = new Set(
-    messages
-      .filter((m, i) => m.direction === "out" && m.status === "failed" && messages.slice(i + 1, i + 4).some((n) => n.direction === "out" && n.channel === "voice" && n.body === m.body))
-      .map((m) => m.id),
-  );
-  const visible = messages.filter((m) => !phonedIn.has(m.id));
   const lastMine = visible.findLastIndex((m) => m.direction === "in" && m.kind !== "call");
   const thinking = messages.at(-1)?.direction === "in";
   const smsThread = messages.filter((m) => m.direction === "in").at(-1)?.channel === "sms";
@@ -87,6 +91,7 @@ export function Thread({
         <div className="text-[11px] text-im-meta">
           {teloPhone ? teloPhone : liveLine ? "Number not set (TELO_PHONE_NUMBER)" : "Simulated line"}
         </div>
+        {user && liveLine && <UpdatesToggle user={user} onChange={onSent} />}
       </div>
 
       <div className="scroll-thin flex-1 overflow-y-auto px-3 py-3">
@@ -113,7 +118,7 @@ export function Thread({
           const mine = m.direction === "in";
           const endOfRun = !next || next.direction !== m.direction || new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() > 60_000;
           const task = m.taskId ? waiting.get(m.taskId) : undefined;
-          const options = task && lastAsk.get(task.id) === messages.indexOf(m) ? task.waiting?.options : undefined;
+          const options = task && lastAsk.get(task.id) === i ? task.waiting?.options : undefined;
 
           if (m.kind === "email") {
             // What Telo noticed in the inbox: a quiet note, not a text.
@@ -159,7 +164,11 @@ export function Thread({
                   {m.body}
                 </div>
               </div>
-              {!mine && m.channel === "voice" && m.kind !== "call" && <p className="-mt-1 mb-2 pl-2 text-[11px] text-im-meta">Told you by phone</p>}
+              {!mine && m.channel === "voice" && m.kind !== "call" && (
+                <p className="-mt-1 mb-2 pl-2 text-[11px] text-im-meta">
+                  {textFor.has(m.id) && textFor.get(m.id)!.status !== "failed" ? "Texted and called you" : "Told you by phone"}
+                </p>
+              )}
               {options && (
                 <div className="mb-2 flex flex-wrap gap-1.5 pl-1">
                   {options.map((o) => (
@@ -227,6 +236,49 @@ export function Thread({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/** How Telo reaches the user: texts only, or texts plus a phone call for anything that needs them. */
+function UpdatesToggle({ user, onChange }: { user: StateDTO["user"]; onChange: () => void }) {
+  const [pending, setPending] = useState<boolean | null>(null);
+  const calls = pending ?? user.callUpdates;
+  useEffect(() => setPending(null), [user.callUpdates]);
+  async function choose(next: boolean) {
+    if (next === calls) return;
+    setPending(next);
+    await post("/api/settings", { callUpdates: next });
+    onChange();
+  }
+  const option = (on: boolean, label: string, Icon: typeof Phone, title: string) => (
+    <button
+      type="button"
+      title={title}
+      aria-pressed={calls === on}
+      onClick={() => void choose(on)}
+      className={clsx(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-[3px] transition",
+        calls === on ? "bg-surface text-im-gray-ink shadow-sm dark:bg-im-gray" : "text-im-meta hover:text-im-gray-ink",
+      )}
+    >
+      <Icon className="size-3" /> {label}
+    </button>
+  );
+  return (
+    <div className="mt-2 flex flex-col items-center gap-1">
+      <div className="flex items-center gap-1.5 text-[11px]">
+        <span className="text-im-meta">Updates</span>
+        <div role="group" aria-label="How Telo reaches you" className="flex rounded-full bg-black/[0.06] p-[2px] font-medium dark:bg-white/10">
+          {option(false, "Text", MessageSquare, "Telo texts you. It never calls unless you ask.")}
+          {option(true, "Text + call", Phone, "Telo texts you, and also calls when it needs an answer or a call has news. At night it only calls if you've been talking to it.")}
+        </div>
+      </div>
+      {user.textsFailing && (
+        <p className={clsx("max-w-[18rem] text-center text-[10.5px] leading-snug", calls ? "text-im-meta" : "text-wait")}>
+          {calls ? "Texts aren't reaching your phone yet (carrier registration), so Telo calls you." : "Texts aren't reaching your phone yet (carrier registration). Turn on calls to hear from Telo."}
+        </p>
+      )}
     </div>
   );
 }

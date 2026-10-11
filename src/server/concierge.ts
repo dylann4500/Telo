@@ -123,7 +123,7 @@ export async function handleUserInput(input: {
   for (const action of route.actions) {
     await perform(user, action, route, input.text, input.channel, replyChannel, via === "call_transcript");
   }
-  if (!route.actions.length && route.reply) {
+  if (!route.actions.length && route.reply && via !== "call_transcript") {
     await notify({ userId: user.id, kind: "reply", body: route.reply, channel: replyChannel });
   }
 }
@@ -268,11 +268,25 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       await reply(`Noted: ${pref}.`);
       return;
     }
+    case "set_updates": {
+      const callUpdates = action.updates === "call";
+      if (!action.updates) return;
+      await setCallUpdates(user.id, callUpdates, "you asked");
+      await reply(callUpdates ? "Got it. I'll text you, and call too when I need you or a call has news." : "Got it. I'll just text you from now on.");
+      return;
+    }
     case "chat": {
-      await reply(route.reply ?? "I'm here. Text me anything that needs a phone call and I'll handle it.");
+      // After a call it's goodbye or thanks on the line: nothing to text back.
+      await nothingToDo(route.reply ?? "I'm here. Text me anything that needs a phone call and I'll handle it.");
       return;
     }
   }
+}
+
+/** The "Text me / Text + call me" choice, from the dashboard toggle or from asking Telo. */
+export async function setCallUpdates(userId: string, callUpdates: boolean, via: "you asked" | "dashboard"): Promise<void> {
+  await db.update(users).set({ callUpdates }).where(eq(users.id, userId));
+  await recordEvent({ userId, type: "preference.saved", summary: `Updates: ${callUpdates ? "texts and calls" : "texts only"} (${via})` });
 }
 
 /** Applies the user's answer to an approval question (from a text, a call, or a dashboard tap). */

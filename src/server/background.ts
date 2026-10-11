@@ -1,13 +1,13 @@
 import { and, eq, gte, inArray, isNotNull, isNull, lt, lte, or } from "drizzle-orm";
 import { config } from "./config";
 import { db, ensureDb } from "./db/client";
-import { appState, calls, tasks, webhookReceipts } from "./db/schema";
+import { appState, calls, questions, tasks, webhookReceipts } from "./db/schema";
 import { ACTIONABLE } from "./domain/state-machine";
 import { syncPendingEvents } from "./memory/events";
 import { notify } from "./notify";
 import { isTaskBusy, kick, wakeTask } from "./orchestrator";
 import { statusDigest } from "./status";
-import { getUser, openQuestion, patchTask } from "./tasks/repo";
+import { getTask, getUser, openQuestion, patchTask } from "./tasks/repo";
 import { clampToCallingHours, formatWhen, withinCallingHours } from "./time";
 import { pollInbox } from "./inbox";
 import { getVoice } from "./voice";
@@ -71,8 +71,24 @@ export async function wakeScheduledTasks() {
   }
 }
 
+/** Calls Telo offered overnight (from email) wait for the morning, then go out once, as a text. */
+export async function deliverMorningOffers() {
+  const open = await db.select().from(questions).where(and(eq(questions.status, "open"), eq(questions.kind, "approval")));
+  for (const q of open) {
+    const ctx = q.context as { suggestion?: boolean; deferred?: boolean };
+    if (!ctx.suggestion || !ctx.deferred) continue;
+    const user = await getUser(q.userId);
+    if (!user || !withinCallingHours(new Date(), user.timezone)) continue;
+    await db.update(questions).set({ context: { ...ctx, deferred: false } }).where(eq(questions.id, q.id));
+    const task = await getTask(q.taskId);
+    if (task?.status !== "needs_approval") continue;
+    await notify({ userId: q.userId, taskId: q.taskId, kind: "approval", body: q.prompt, dedupeKey: `morning:${q.id}`, noCall: true });
+  }
+}
+
 /** One nudge for a question the user hasn't answered in a while (recent tasks, waking hours only). */
 async function remindWaitingUsers() {
+  await deliverMorningOffers();
   const hours = config.calls.remindAfterHours;
   if (!(hours > 0)) return;
   const waiting = await db
@@ -91,12 +107,14 @@ async function remindWaitingUsers() {
     const user = await getUser(t.userId);
     const q = await openQuestion(t.id);
     if (!user || !q || !withinCallingHours(new Date(), user.timezone)) continue;
+    // A nudge is a text: the question itself already rang their phone if calls are on.
     await notify({
       userId: t.userId,
       taskId: t.id,
       kind: q.kind === "approval" ? "approval" : "question",
       body: `Still need you on "${t.title}": ${q.prompt}`,
       dedupeKey: `remind:${q.id}`,
+      noCall: true,
     });
   }
 }

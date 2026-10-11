@@ -75,7 +75,8 @@ export interface MessageDTO {
 
 export interface StateDTO {
   modes: Modes;
-  user: { name: string; phone: string | null; channel: string };
+  /** callUpdates: also phone the user (the "Text + call" toggle). textsFailing: the latest text didn't arrive. */
+  user: { name: string; phone: string | null; channel: string; callUpdates: boolean; textsFailing: boolean };
   teloPhone: string | null;
   tasks: TaskSummaryDTO[];
   messages: MessageDTO[];

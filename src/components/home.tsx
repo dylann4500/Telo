@@ -66,6 +66,7 @@ export function Home() {
               tasks={tasks}
               teloPhone={teloPhone}
               liveLine={data?.modes.voice === "dial"}
+              user={data?.user}
               onSent={() => void mutate()}
             />
           </div>

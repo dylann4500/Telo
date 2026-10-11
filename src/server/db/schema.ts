@@ -36,6 +36,9 @@ export const users = sqliteTable("users", {
   name: text("name").notNull(),
   phone: text("phone"),
   channel: text("channel").$type<Channel>().notNull().default("sms"),
+  // Also phone the user (on top of the text) for questions, decisions and news
+  // from calls. The dashboard toggle and "just text me" change it.
+  callUpdates: integer("call_updates", { mode: "boolean" }).notNull().default(true),
   timezone: text("timezone").notNull().default("America/Los_Angeles"),
   preferences: text("preferences", { mode: "json" }).$type<string[]>().notNull().$defaultFn(() => []),
   createdAt: createdAt(),

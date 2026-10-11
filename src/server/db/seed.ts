@@ -42,10 +42,11 @@ export async function seedBaseline() {
   const u = config.user;
   await db
     .insert(users)
-    .values({ id: u.id, name: u.name, phone: u.phone, channel: u.channel, timezone: u.timezone })
+    .values({ id: u.id, name: u.name, phone: u.phone, channel: u.channel, callUpdates: u.callUpdates, timezone: u.timezone })
     .onConflictDoUpdate({
       target: users.id,
-      // Keep a phone linked by text when TELO_USER_PHONE is unset.
+      // Keep a phone linked by text when TELO_USER_PHONE is unset, and the
+      // user's own text/call choice (callUpdates is only the starting value).
       set: { name: u.name, channel: u.channel, timezone: u.timezone, ...(u.phone ? { phone: u.phone } : {}) },
     });
   for (const d of directory()) {

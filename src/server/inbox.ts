@@ -161,6 +161,7 @@ async function suggestCall(user: UserRow, msg: MailMessage, read: ReadEmailResul
   await db.update(emails).set({ taskId }).where(eq(emails.id, msg.id));
   const prompt = `${business} emailed: ${summary.replace(/\.$/, "")}. Want me to call them${phone ? ` at ${prettyPhone(phone)}` : ""}?`;
   const questionId = newId("q");
+  const awake = withinCallingHours(new Date(), user.timezone);
   await db.insert(questions).values({
     id: questionId,
     userId: user.id,
@@ -172,16 +173,18 @@ async function suggestCall(user: UserRow, msg: MailMessage, read: ReadEmailResul
       { id: "call", label: "Call them" },
       { id: "skip", label: "No thanks" },
     ],
-    context: { emailId: msg.id, phone, suggestion: true },
+    // deferred: found at night; the background loop texts it once in the morning.
+    context: { emailId: msg.id, phone, suggestion: true, deferred: !awake },
   });
   await recordEvent({ userId: user.id, taskId, orgKey, type: "approval.requested", summary: `Asked you: call ${business} about their email?`, typed: { approvalKind: "email_followup" } });
-  // At night it waits on the dashboard, and the morning reminder delivers it.
+  // During the day: a text (and a call, with calls on). At night it waits on
+  // the dashboard until the morning text; overnight finds never ring the phone.
   await notify({
     userId: user.id,
     taskId,
     kind: "approval",
     body: prompt,
     dedupeKey: `q:${questionId}`,
-    channel: withinCallingHours(new Date(), user.timezone) ? undefined : "web",
+    channel: awake ? undefined : "web",
   });
 }

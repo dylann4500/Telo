@@ -4,7 +4,7 @@
 
 Text Telo, or call it: *"Cancel my gym membership."* *"My bill is wrong again, can you call them?"* *"Find a windshield shop that can do tomorrow under $400."* Telo asks only for what the call needs, makes the call with an AI voice agent, handles it on its own, and texts you when it's done. It interrupts you only for decisions that are yours to make, like a retention offer you never said how to handle. And every time it deals with a business, it remembers what happened, so the next call starts with *"On October 2 your rep promised a $20 credit under confirmation A1832..."*
 
-Telo is not another assistant wired into your inbox and calendar. It learns what it needs just in time, for one task, and keeps a history of what businesses said and promised.
+Telo isn't a general assistant. It learns what it needs just in time, for one task, and keeps a history of what businesses said and promised. Connected to Gmail and Google Calendar, it also picks up business mail and books inside your free time.
 
 Built for SpeedHacks (SF Tech Week) on **[Dial](https://getdial.ai)** (phone numbers, AI calls, texts), **[Keewano](https://keewano.com)** (event memory) and **Claude** (reasoning).
 
@@ -15,6 +15,7 @@ Built for SpeedHacks (SF Tech Week) on **[Dial](https://getdial.ai)** (phone num
 - **Text Telo's number** (SMS or iMessage) from your phone. That's the main interface.
 - **Call Telo's number.** Dial's voice agent answers as Telo and uses Telo's tools mid-call: it can start a task, answer a question Telo asked you, take your decision, or tell you the status.
 - **Telo texts you back** at the moments that matter: *"Calling Equinox now."* *"They offered $18/month instead of cancelling. Accept, or keep cancelling?"* *"Done. Membership ends Nov 8, confirmation 18392."*
+- **Text me, or text and call me.** A toggle in the dashboard's thread header (or just text Telo "just text me" / "call me with updates"). With calls on, Telo also phones you when it needs an answer, when a call has news, and when a task is done; at night only if you've been talking to it, or if a business is waiting on the line.
 - **Ask anytime:** *"any update?"*, *"what did Comcast promise last time?"* Telo answers from live task state and its memory.
 - **The dashboard** (http://localhost:3210) mirrors the thread as it looks on your phone, plus the work behind it: live calls, transcripts, what Telo remembered, and the query that fetched it.
 
@@ -110,7 +111,7 @@ Put `ANTHROPIC_API_KEY` in `.env.local` and run `npm run llm:check`. `TELO_MODEL
 4. Restart `npm run dev`. The dashboard shows a code: text `LINK <code>` from your phone to Telo's number to link it (or set `TELO_USER_PHONE`). Then text Telo anything.
 
 **Texting caveats (read before the demo):**
-- **US carriers block SMS *from* a standard number until it passes 10DLC registration** ($25, about 3–5 business days). Texts *to* Telo still arrive, and voice works both ways. Options: an iMessage number (no 10DLC, $250/month on Dial), a pre-approved number from Dial staff, or `TELO_USER_CHANNEL=voice` so Telo phones you with updates. Telo also falls back to calling you automatically when a text that needs you fails to deliver.
+- **US carriers block SMS *from* a standard number until it passes 10DLC registration** ($25, about 3–5 business days). Texts *to* Telo still arrive, and voice works both ways. Options: an iMessage number (no 10DLC, $250/month on Dial), a pre-approved number from Dial staff, or keep updates on **Text + call** (the default) so Telo also phones you for anything that needs you. With **Text** only, undelivered texts just wait in the dashboard thread, marked "Not delivered".
 - **Free Dial accounts cap calls at 5 minutes and 2 at once** until the first top-up. A long hold queue will be cut off.
 - Quick tunnels get a new URL each start: run `npm run dial:setup` again after restarting the tunnel.
 
@@ -138,6 +139,7 @@ Every variable is documented in [.env.example](.env.example). The important ones
 |---|---|
 | `TELO_USER_NAME`, `TELO_USER_PHONE` | Who Telo works for; texts and calls from that number are you |
 | `TELO_USER_CHANNEL` | Where proactive updates go: `sms`, `imessage`, `whatsapp`, `voice`, `web` |
+| `TELO_CALL_UPDATES` | Starting value of the Text / Text + call toggle (default `true`: calls on). The toggle and "just text me" change it after that |
 | `ANTHROPIC_API_KEY`, `TELO_MODEL` | Claude |
 | `DIAL_API_KEY` (+ values written by `dial:setup`) | Dial |
 | `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID`, `KEEWANO_PG_USER` | Keewano |

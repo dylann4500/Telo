@@ -49,21 +49,14 @@ export async function ingestVoiceEvent(e: VoiceEvent): Promise<void> {
         if (e.deliveryState === "delivered") await db.update(messages).set({ status: "delivered" }).where(eq(messages.providerMessageId, e.providerMessageId));
         return;
       }
-      const rows = await db
+      // A text that couldn't be delivered (e.g. carriers blocking an
+      // unregistered number). With calls on, anything that needed the user
+      // already rang their phone too; with texts only, it waits in the
+      // dashboard thread marked "Not delivered".
+      await db
         .update(messages)
         .set({ status: "failed", error: e.error ?? "undelivered" })
-        .where(eq(messages.providerMessageId, e.providerMessageId))
-        .returning();
-      // A text that couldn't be delivered (e.g. carriers blocking an
-      // unregistered number) but needs the user: call them instead.
-      const msg = rows[0];
-      // An optional offer (a call suggested from an email) never becomes a phone call.
-      const offer = msg?.taskId ? await getTask(msg.taskId) : undefined;
-      if (offer?.source === "email" && offer.status === "needs_approval") return;
-      if (msg && ["approval", "question", "result", "failure"].includes(msg.kind)) {
-        const { notify } = await import("../notify");
-        await notify({ userId: msg.userId, taskId: msg.taskId, kind: msg.kind as "approval", body: msg.body, channel: "voice", dedupeKey: `voice-fallback:${msg.id}` });
-      }
+        .where(eq(messages.providerMessageId, e.providerMessageId));
       return;
     }
   }
@@ -226,7 +219,7 @@ async function passOnMessage(call: CallRow) {
   await notify({
     userId: call.userId,
     taskId: call.taskId,
-    kind: "update",
+    kind: "report",
     body: `${who} called my line: "${said.length > 220 ? `${said.slice(0, 217)}...` : said}"`,
     dedupeKey: `inbound:${call.id}`,
   });

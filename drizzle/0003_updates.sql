@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `call_updates` integer DEFAULT true NOT NULL;

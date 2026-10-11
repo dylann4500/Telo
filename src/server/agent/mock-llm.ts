@@ -133,7 +133,15 @@ export class MockLLM implements LLM {
   }
 
   private route(b: Blocks) {
-    const text = String(b.latest_message ?? b.call_transcript ?? "");
+    // A call transcript is read for what the caller said, not Telo's lines.
+    const text =
+      b.latest_message != null
+        ? String(b.latest_message)
+        : String(b.call_transcript ?? "")
+            .split("\n")
+            .filter((l) => l.trim() && !/^TELO:/.test(l))
+            .map((l) => l.replace(/^[A-Z][A-Z .'-]{0,30}:\s*/, ""))
+            .join(" ");
     const tasks = (b.open_tasks as Array<{
       id: string;
       title: string;
@@ -141,9 +149,16 @@ export class MockLLM implements LLM {
       openQuestion: { kind: string; fields: { key: string }[]; options: { id: string; label: string }[] } | null;
     }>) ?? [];
     const containsSecret = /\b(password|passcode|pin)\b[^a-z]*\w*\d/i.test(text) || /\b\d{3}-\d{2}-\d{4}\b/.test(text);
-    const base = { taskId: null, request: null, answers: [], decision: null, query: null, needsHistory: false, preference: null };
+    const base = { taskId: null, request: null, answers: [], decision: null, query: null, needsHistory: false, preference: null, updates: null };
     const waiting = tasks.find((t) => t.openQuestion);
     const lower = text.toLowerCase();
+
+    if (/\b(just text me|only text( me)?|text me instead|stop calling me|don'?t call me)\b/i.test(text)) {
+      return { containsSecret, actions: [{ ...base, type: "set_updates", updates: "text" }], reply: null };
+    }
+    if (/\b(call me (with|for) updates|call me too|call me as well|also call me|phone me when)\b/i.test(text)) {
+      return { containsSecret, actions: [{ ...base, type: "set_updates", updates: "call" }], reply: null };
+    }
 
     if (STATUS.test(text) && !/\b(can you|please|call)\b/i.test(text)) {
       const about = tasks.find((t) => t.title.toLowerCase().split(/\s+/).some((w) => w.length > 3 && lower.includes(w)));

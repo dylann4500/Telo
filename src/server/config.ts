@@ -23,6 +23,8 @@ export const config = {
     name: env("TELO_USER_NAME") ?? "Dylan",
     phone: env("TELO_USER_PHONE") ?? null,
     channel: pick("TELO_USER_CHANNEL", ["sms", "imessage", "whatsapp", "voice", "web"] as const, "sms"),
+    // The starting value of the "text me / text and call me" toggle (only used when the user row is created).
+    callUpdates: env("TELO_CALL_UPDATES") !== "false",
     timezone: env("TELO_TIMEZONE") ?? "America/Los_Angeles",
   },
 
