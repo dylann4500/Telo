@@ -1,9 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
+  // Loaded by Node at runtime instead of bundled: the Dial SDK reads its own
+  // package.json at import time, and libsql/pg ship native or TCP code.
+  serverExternalPackages: ["@getdial/sdk", "pubnub", "@libsql/client", "libsql", "pg"],
   turbopack: {
     rules: {
       "*.css": {
