@@ -121,7 +121,7 @@ export async function handleUserInput(input: {
   // Replies to a call transcript go out on the user's normal channel: they've hung up.
   const replyChannel: Channel | undefined = via === "call_transcript" ? undefined : input.channel;
   for (const action of route.actions) {
-    await perform(user, action, route, input.text, input.channel, replyChannel);
+    await perform(user, action, route, input.text, input.channel, replyChannel, via === "call_transcript");
   }
   if (!route.actions.length && route.reply) {
     await notify({ userId: user.id, kind: "reply", body: route.reply, channel: replyChannel });
@@ -130,8 +130,10 @@ export async function handleUserInput(input: {
 
 type Action = RouteResult["actions"][number];
 
-async function perform(user: UserRow, action: Action, route: RouteResult, text: string, source: Channel, replyChannel: Channel | undefined) {
+async function perform(user: UserRow, action: Action, route: RouteResult, text: string, source: Channel, replyChannel: Channel | undefined, afterCall = false) {
   const reply = (body: string, taskId?: string) => notify({ userId: user.id, taskId, kind: "reply", body, channel: replyChannel });
+  // After a call, a "nothing to do" usually means it was handled live on the call: stay quiet.
+  const nothingToDo = (body: string) => (afterCall ? Promise.resolve() : reply(body));
   const active = await listActiveTasks(user.id);
   const find = (status?: string) =>
     active.find((t) => t.id === action.taskId) ?? (status ? active.find((t) => t.status === status) : undefined);
@@ -155,7 +157,7 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
     case "provide_info": {
       const task = find("needs_info");
       if (!task || task.status !== "needs_info") {
-        await reply("Thanks. I'm not waiting on anything from you right now.");
+        await nothingToDo("Thanks. I'm not waiting on anything from you right now.");
         return;
       }
       const q = await openQuestion(task.id);
@@ -217,7 +219,7 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
     case "decide": {
       const task = find("needs_approval");
       if (!task || task.status !== "needs_approval") {
-        await reply("Nothing is waiting on a decision right now.");
+        await nothingToDo("Nothing is waiting on a decision right now.");
         return;
       }
       await decideTask(user, task.id, action.decision?.optionId ?? null, action.decision?.approve ?? true, action.decision?.note ?? null);
@@ -231,7 +233,7 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
     case "cancel_task": {
       const task = find();
       if (!task) {
-        await reply("I couldn't tell which task to stop. Which one?");
+        await nothingToDo("I couldn't tell which task to stop. Which one?");
         return;
       }
       if (await cancelTask(task.id, "You asked me to stop.")) await reply(`Stopped "${task.title}".`, task.id);
@@ -247,7 +249,7 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       }
       const failed = (await listRecentTasks(user.id, 5)).find((t) => t.id === action.taskId || t.status === "failed");
       if (!failed || failed.status !== "failed") {
-        await reply("There's nothing to retry right now.");
+        await nothingToDo("There's nothing to retry right now.");
         return;
       }
       const moved = await transitionTask(failed.id, "new", { stepFailures: 0, lastError: null, result: null, completedAt: null, statusDetail: "Trying again" }, ["failed"]);
@@ -388,6 +390,11 @@ export async function handleUserCallFinished(callId: string): Promise<void> {
     .select({ prompt: questions.prompt })
     .from(questions)
     .where(and(eq(questions.userId, user.id), eq(questions.status, "answered"), gte(questions.answeredAt, since)));
+  // What Telo said on the call through its tools ("Calling Skyway now.") was already acted on.
+  const toldDuringCall = await db
+    .select({ body: messages.body })
+    .from(messages)
+    .where(and(eq(messages.userId, user.id), eq(messages.direction, "out"), eq(messages.channel, "voice"), gte(messages.createdAt, since)));
   const transcript = call.transcript
     .map((t) => `${t.speaker === "agent" ? "TELO" : user.name.split(" ")[0].toUpperCase()}: ${t.text}`)
     .join("\n");
@@ -399,6 +406,7 @@ export async function handleUserCallFinished(callId: string): Promise<void> {
     alreadyHandled: [
       ...duringCall.map((t) => `Created task: ${t.title}`),
       ...answeredDuringCall.map((q) => `Answered: ${q.prompt}`),
+      ...toldDuringCall.map((m) => `Told the user on the call: ${m.body}`),
     ],
   });
 }
