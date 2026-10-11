@@ -6,7 +6,10 @@ import { setEnv } from "./env-file";
 // Quick tunnels get a new URL every start; run `npm run dial:setup` after.
 
 const port = process.env.PORT ?? process.argv[2] ?? "3210";
-const child = spawn("cloudflared", ["tunnel", "--no-autoupdate", "--url", `http://localhost:${port}`], { stdio: ["ignore", "pipe", "pipe"] });
+// HTTP/2 over TCP: the default QUIC (UDP) transport drops on many networks.
+const child = spawn("cloudflared", ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", `http://localhost:${port}`], {
+  stdio: ["ignore", "pipe", "pipe"],
+});
 let found = false;
 
 function scan(chunk: Buffer) {
