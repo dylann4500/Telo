@@ -98,13 +98,12 @@ const SQL_SYSTEM = `You write one read-only SQL query for KeewanoDB, an event da
 - There is one table, events. Columns: user_id (text, the entity id), event_datetime, plus one column per event type (listed below).
 - Each event-type column is a step function: its value holds forward from one occurrence until the next. WHERE clauses select stretches of each entity's timeline.
 - Selecting bare columns with no aggregate emits one row per occurrence of the selected event columns.
-- Supported: SELECT, WHERE, GROUP BY, ORDER BY, LIMIT, aggregates (count, sum, avg, min, max), count(DISTINCT user_id), FILTER (WHERE ...), subqueries in FROM, occurrence(col), and count(col) in WHERE as a per-entity gate.
-- Not supported: JOIN, CTE (WITH), window functions, UNION, writes.
+- Supported: SELECT, WHERE, GROUP BY, ORDER BY, LIMIT, aggregates (count, sum, avg, min, max), count(DISTINCT user_id), subqueries in FROM, occurrence(col), and count(col) in WHERE as a per-entity gate.
+- Not supported: JOIN, CTE (WITH), window functions, UNION, writes, and FILTER on an aggregate (Keewano answers "unsupported aggregate"). Put the condition in WHERE instead: count(vendor_outcome) ... WHERE vendor_outcome = 'no_show' counts no-shows, because a column's own occurrence carries its new value.
 - Entities: each vendor, unit, owner, property, asset, tenancy (a lease), agency and task is its own user_id, and so is the management firm (pm). Use the ids given, or entity_kind = 'vendor' / 'unit' / ... to cover all entities of a kind and GROUP BY user_id. Older consumer streams (relationship, org, user) may also exist.
 - Context columns (amounts, confirmation numbers, durations) are written just before their anchor event. Total or average them directly. Never add a condition on the anchor column when aggregating its amount.
   WRONG (returns nothing): SELECT sum(commitment_amount_cents) FROM events WHERE user_id = '<id>' AND commitment_received = 'account_credit'
   RIGHT: SELECT sum(commitment_amount_cents) AS cents FROM events WHERE user_id = '<id>'
-- FILTER (WHERE ...) allows only one comparison, IN or BETWEEN on one event column.
 - Money columns are in cents.
 - Always end with LIMIT 50 or less.
 
@@ -114,12 +113,12 @@ SELECT count(commitment_received) AS promises, count(commitment_broken) AS broke
 SELECT user_id, count(commitment_broken) AS broken FROM events WHERE entity_kind = 'relationship' GROUP BY user_id LIMIT 50
 SELECT commitment_received AS kind, count(commitment_received) AS n FROM events WHERE entity_kind = 'relationship' GROUP BY commitment_received LIMIT 50
 SELECT count(call_ended) AS calls, avg(call_duration_seconds) AS avg_seconds FROM events WHERE user_id = '<org id>' LIMIT 1
-SELECT user_id, count(vendor_outcome) FILTER (WHERE vendor_outcome = 'no_show') AS no_shows, count(vendor_outcome) AS visits FROM events WHERE entity_kind = 'vendor' GROUP BY user_id ORDER BY no_shows DESC LIMIT 10
+SELECT user_id, count(vendor_outcome) AS no_shows FROM events WHERE entity_kind = 'vendor' AND vendor_outcome = 'no_show' GROUP BY user_id ORDER BY no_shows DESC LIMIT 10
 SELECT user_id, sum(booked_cents) AS cents FROM events WHERE entity_kind = 'unit' AND event_datetime >= '2026-01-01' GROUP BY user_id ORDER BY cents DESC LIMIT 10
 SELECT avg(replace_cents) AS avg_cents, count(replace_cents) AS n FROM events WHERE entity_kind = 'asset' AND asset_registered = 'water_heater' LIMIT 1
 SELECT user_id, avg(approval_response_seconds) AS avg_seconds FROM events WHERE entity_kind = 'owner' GROUP BY user_id LIMIT 10
-SELECT count(access_outcome) FILTER (WHERE access_outcome = 'no_access') AS wasted_trips FROM events WHERE entity_kind = 'unit' LIMIT 1
-SELECT avg(manager_touches) AS touches, avg(days_to_fix) AS days FROM events WHERE user_id = '<pm id>' LIMIT 1`;
+SELECT count(access_outcome) AS wasted_trips FROM events WHERE entity_kind = 'unit' AND access_outcome = 'no_access' LIMIT 1
+SELECT avg(manager_touches) AS touches, avg(days_to_fix) AS days FROM events WHERE entity_kind = 'pm' LIMIT 1`;
 
 /** Events sent to Keewano recently enough that a query can't see them yet. */
 async function recentTypedEvents(userId: string) {

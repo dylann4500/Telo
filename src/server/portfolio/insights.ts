@@ -69,21 +69,33 @@ export async function rankVendors(trade: Trade): Promise<Insight<Scorecard[]>> {
   let counts: Counts | null = null;
   const trace: MemoryTrace[] = [];
   if (memory instanceof KeewanoMemory) {
-    const query =
-      "SELECT user_id, count(vendor_outcome) AS visits, count(vendor_outcome) FILTER (WHERE vendor_outcome = 'no_show') AS no_shows, count(vendor_outcome) FILTER (WHERE vendor_outcome = 'late') AS late, count(wo_completed) AS jobs, count(wo_completed) FILTER (WHERE wo_completed = 'fixed_first_visit') AS first_fix FROM events WHERE entity_kind = 'vendor' GROUP BY user_id LIMIT 50";
+    // Keewano's SQL rejects count(...) FILTER (WHERE ...) ("unsupported aggregate"), so each
+    // condition is its own query with the condition in WHERE, all run at once.
+    const queries = {
+      totals: "SELECT user_id, count(vendor_outcome) AS visits, count(wo_completed) AS jobs FROM events WHERE entity_kind = 'vendor' GROUP BY user_id LIMIT 50",
+      noShows: "SELECT user_id, count(vendor_outcome) AS n FROM events WHERE entity_kind = 'vendor' AND vendor_outcome = 'no_show' GROUP BY user_id LIMIT 50",
+      late: "SELECT user_id, count(vendor_outcome) AS n FROM events WHERE entity_kind = 'vendor' AND vendor_outcome = 'late' GROUP BY user_id LIMIT 50",
+      firstFix: "SELECT user_id, count(wo_completed) AS n FROM events WHERE entity_kind = 'vendor' AND wo_completed = 'fixed_first_visit' GROUP BY user_id LIMIT 50",
+    };
     const started = Date.now();
     try {
-      const rows = await memory.sql(query);
-      trace.push({ via: "keewano-sql", request: query, ms: Date.now() - started, rows: rows.length });
+      const [totals, noShows, late, firstFix] = await Promise.all(Object.values(queries).map((q) => memory.sql(q)));
+      const ms = Date.now() - started;
+      for (const [q, rows] of [[queries.totals, totals], [queries.noShows, noShows], [queries.late, late], [queries.firstFix, firstFix]] as const) {
+        trace.push({ via: "keewano-sql", request: q, ms, rows: rows.length });
+      }
       const byUuid = new Map(candidates.map((v) => [entityUuid({ type: "vendor", id: v.id }), v.id]));
+      const pick = (rows: Record<string, unknown>[], uuid: string) => n(rows.find((r) => r.user_id === uuid)?.n);
       const found: Counts = {};
-      for (const r of rows) {
+      for (const r of totals) {
         const id = byUuid.get(String(r.user_id));
-        if (id) found[id] = { visits: n(r.visits), noShows: n(r.no_shows), late: n(r.late), jobs: n(r.jobs), firstFix: n(r.first_fix) };
+        if (!id) continue;
+        const uuid = String(r.user_id);
+        found[id] = { visits: n(r.visits), jobs: n(r.jobs), noShows: pick(noShows, uuid), late: pick(late, uuid), firstFix: pick(firstFix, uuid) };
       }
       if (Object.keys(found).length) counts = found;
     } catch (err) {
-      trace.push({ via: "keewano-sql", request: `${query} -- failed: ${(err as Error).message.slice(0, 120)}`, ms: Date.now() - started, rows: 0 });
+      trace.push({ via: "keewano-sql", request: `${queries.totals} -- failed: ${(err as Error).message.slice(0, 120)}`, ms: Date.now() - started, rows: 0 });
     }
   }
   const source = counts ? "keewano" : "local";

@@ -323,12 +323,15 @@ Sensitive values (codes, account numbers) are masked in the dashboard and redact
 
 **Before and after (Keewano's bonus):** compare `manager_touches` per work order and the hours from report to vendor booked. Before Telo, these come from seeded history; after, from Telo-handled jobs. Label the "before" as seeded on any slide.
 
-**A query sketch** to check against Keewano with `npm run keewano:check`:
+**A query sketch**, checked against the live project:
 
 ```sql
-SELECT user_id, count(vendor_outcome) FILTER (WHERE vendor_outcome = 'no_show') AS no_shows
-FROM events WHERE entity_kind = 'vendor' GROUP BY user_id ORDER BY no_shows DESC LIMIT 10
+SELECT user_id, count(vendor_outcome) AS no_shows
+FROM events WHERE entity_kind = 'vendor' AND vendor_outcome = 'no_show'
+GROUP BY user_id ORDER BY no_shows DESC LIMIT 10
 ```
+
+**Note from the build:** Keewano rejects `count(...) FILTER (WHERE ...)` with "unsupported aggregate in the SELECT list", with or without `GROUP BY`. Put the condition in `WHERE` instead: a column's own occurrence carries its new value, so `WHERE vendor_outcome = 'no_show'` counts exactly the no-shows. Each condition is then its own query (Telo's vendor ranking runs four at once). An anchor written on an asset's stream holds forward, so `WHERE entity_kind = 'asset' AND asset_registered = 'water_heater'` selects every water heater, and `avg(replace_cents)` there gives the replacement price.
 
 Telo then maps each `user_id` to the vendor's name locally.
 
