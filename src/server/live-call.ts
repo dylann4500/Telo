@@ -157,8 +157,15 @@ const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
 // What the business asks for, said the way a person would: "Account number", not a sentence.
 const COMMON_DETAILS = /\b(account number|account holder'?s? name|name on the account|member(?:ship)? (?:id|number)|policy number|order number|confirmation number|reference number|date of birth|zip code|billing address|service address|last (?:four|4) digits(?: of [a-z ]+)?|email(?: address)?|phone number|claim number|case number|license plate|vin)\b/i;
-function shortLabel(detail: string, question: string): string {
-  const d = detail.replace(/[?.!]+$/, "").trim();
+function shortLabel(detail: string, question: string, business = ""): string {
+  // "Westbay account number" → "Account number": the business is already in the text.
+  const words = business.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  const d = detail
+    .replace(/[?.!]+$/, "")
+    .split(/\s+/)
+    .filter((w) => !words.includes(w.toLowerCase().replace(/'s$/, "")))
+    .join(" ")
+    .trim();
   if (d && d.split(/\s+/).length <= 4) return d.replace(/^./, (c) => c.toUpperCase());
   const hit = `${d} ${question}`.match(COMMON_DETAILS)?.[1];
   if (hit) return hit.replace(/^./, (c) => c.toUpperCase());
@@ -235,12 +242,12 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
   if (pending) return ok(`You already asked ${name} (${pending.fields[0]?.label ?? "a decision"}). Call wait_for_customer.`, { status: "asked" });
 
   // Something the user already gave Telo for this task: no need to bother them.
-  const want = slug(shortLabel(detail, question));
+  const want = slug(shortLabel(detail, question, call.targetName));
   const known = !options.length ? task.facts.find((f) => f.source === "user" && (f.key === want || slug(f.label) === want)) : undefined;
   if (known) return ok(`${name} already gave Telo this. ${known.label}: ${known.value}. Share it if the goal needs it.`, { status: "known", value: known.value });
 
   const decision = options.length >= 2;
-  const label = shortLabel(detail, question);
+  const label = shortLabel(detail, question, call.targetName);
   const fields: InfoField[] = decision
     ? []
     : [{ key: slug(label), label, question, sensitive: /account|member|birth|address|email|phone|policy|license|card|digits/i.test(label), required: true }];

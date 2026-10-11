@@ -17,7 +17,7 @@ function bullets(items: string[]): string {
  * lab: the agent turned down a free Tuesday because it wasn't listed, without
  * checking. With the calendar connected, say the list is partial.
  */
-function partOfCalendar(constraint: string): string {
+export function partOfCalendar(constraint: string): string {
   return /^free on .*calendar/i.test(constraint) ? `${constraint.replace(/\.$/, "")} (only some of the free times: check any other time with check_calendar)` : constraint;
 }
 

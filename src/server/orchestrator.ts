@@ -1,9 +1,9 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import * as agent from "./agent";
-import { renderCallInstructions, shareableDetails } from "./agent/call-instructions";
+import { partOfCalendar, renderCallInstructions, shareableDetails } from "./agent/call-instructions";
 import { config } from "./config";
 import { db } from "./db/client";
-import { calls, emails, organizations, questions, type CallRow, type TaskRow, type UserRow } from "./db/schema";
+import { calls, emails, events, organizations, questions, type CallRow, type TaskRow, type UserRow } from "./db/schema";
 import { getCalendar, userAvailability } from "./calendar";
 import type {
   ApprovalOption,
@@ -636,10 +636,16 @@ async function review(task: TaskRow): Promise<boolean> {
       `I couldn't call ${latest.targetName}: ${problem}. ${credit ? "Add credit" : "Check the Dial key"}, then text me "try again".`,
     );
   }
+  // What the agent checked live on the calendar: the constraints' free-time list is only part of it.
+  const calendarChecks = (await db.select().from(events).where(and(eq(events.taskId, task.id), eq(events.type, "calendar.checked"))))
+    .map((e) => e.data as { startsAt?: string; free?: boolean })
+    .filter((x) => x.startsAt)
+    .map((x) => ({ time: formatWhen(new Date(x.startsAt!), user.timezone, { absolute: true }), free: Boolean(x.free) }));
   const d = await agent.decideNext({
     now: now(user),
     task: { title: fresh.title, goal: fresh.goal, request: fresh.request, category: fresh.category },
-    constraints: fresh.constraints,
+    constraints: getCalendar() ? fresh.constraints.map(partOfCalendar) : fresh.constraints,
+    calendarChecks,
     authority: fresh.authority,
     facts: fresh.facts.map((f) => ({ key: f.key, label: f.label, value: f.value, source: f.source })),
     calls: business

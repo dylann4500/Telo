@@ -166,6 +166,8 @@ export function decideNext(input: {
   maxAttemptsPerLeg: number;
   latestDecision: string | null;
   emails: { from: string | null; kind: string | null; summary: string | null; amountUsd: number | null; confirmationNumber: string | null; receivedAt: string | null }[];
+  /** Times checked live on the user's calendar during the calls (check_calendar). */
+  calendarChecks?: { time: string; free: boolean }[];
 }) {
   return getLLM().structured({
     name: "decide-next",
@@ -181,6 +183,7 @@ export function decideNext(input: {
       max_attempts_per_call: input.maxAttemptsPerLeg,
       users_latest_decision: input.latestDecision ?? undefined,
       emails: input.emails.length ? input.emails : undefined,
+      calendar_checked_during_calls: input.calendarChecks?.length ? input.calendarChecks : undefined,
     }),
     schema: S.DecideSchema,
     effort: "medium",
