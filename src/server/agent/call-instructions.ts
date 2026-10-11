@@ -47,7 +47,8 @@ const HOW_TO_TALK = [
 /** The details the agent may share on a call: the facts the plan allowed, or the non-sensitive ones. */
 export function shareableDetails(userName: string, leg: Pick<CallBrief, "mayDisclose"> | null, facts: Fact[]): string[] {
   const allowedKeys = new Set(leg?.mayDisclose ?? []);
-  const shareable = facts.filter((f) => (allowedKeys.size ? allowedKeys.has(f.key) : !f.sensitive));
+  // Photo links are for people to look at, never to read out on a call.
+  const shareable = facts.filter((f) => !f.key.startsWith("photo_") && (allowedKeys.size ? allowedKeys.has(f.key) : !f.sensitive));
   return [`Customer name: ${userName}`, ...shareable.map((f) => `${f.label}: ${f.value}`)];
 }
 
@@ -60,9 +61,12 @@ export function renderCallInstructions(input: {
   constraints: string[];
   /** The user's calendar is connected, so the agent can check_calendar before accepting a time. */
   calendar?: boolean;
+  /** Who decides what's over the limit, when it isn't the user (a work order's owner): "the owner". */
+  approver?: string;
 }): RenderedCall {
   const { userName, leg, authority } = input;
-  const first = userName.split(" ")[0];
+  const first = input.approver ?? userName.split(" ")[0];
+  const approverName = input.approver ?? userName;
 
   const sections = [
     `You are Telo, an AI assistant making a phone call to ${leg.targetName} on behalf of ${userName}. Say you are an AI assistant calling for ${userName} when you introduce yourself, and answer honestly if asked.`,
@@ -85,10 +89,10 @@ export function renderCallInstructions(input: {
       ...(authority?.allowed ?? []),
       ...leg.decisionRules,
     ], 6))}`,
-    `## Check with ${userName} first (never agree to these yourself)\n${bullets(unique([
+    `## Check with ${approverName} first (never agree to these yourself)\n${bullets(unique([
       ...(authority?.askFirst ?? ["Any new fee, contract, plan change or purchase"]),
       authority?.spendLimitUsd != null ? `Anything costing more than $${authority.spendLimitUsd}` : "",
-    ], 5))}\nIf one of these comes up, ask ${first} with ask_customer, giving the choices, and do what ${first} decides. If ${first} doesn't answer in time: thank them, say you need to confirm with ${userName} and will call back, ask for a reference number, then end the call politely.`,
+    ], 5))}\nIf one of these comes up, ask ${first} with ask_customer, giving the choices, and do what ${first} decides. If ${first} doesn't answer in time: thank them, say you need to confirm with ${approverName} and will call back, ask for a reference number, then end the call politely.`,
     `## Never\n${bullets(unique([
       "Share passwords, PINs, security answers, full card numbers or Social Security numbers. If they require one, say the customer will provide it directly.",
       "Say anything is true unless it is in this brief. If you don't know, say you'll check.",

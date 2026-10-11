@@ -332,7 +332,7 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
   const emergency = r.severity === "emergency";
   const limit = emergency ? Math.min(owner.emergencyLimitCents, FIRM.emergencyCapCents) : owner.approvalLimitCents;
   const authority: Authority = {
-    allowed: [`Book a visit that costs ${usd(limit)} or less in total`, "Share the unit address, the problem, the photos and the tenant's preferred times", "Book inside the tenant's preferred times, or tonight for urgent work"],
+    allowed: [`Book a visit that costs ${usd(limit)} or less in total`, "Share the unit address, the problem and the tenant's preferred times", "Book inside the tenant's preferred times, or tonight for urgent work"],
     askFirst: [
       `Any total over ${usd(limit)}: say "one moment" and use ask_customer with the price as a decision (options like "Approve $650" and "Don't approve"); Telo asks the owner by text while they hold`,
       ...(replace ? ["Replacing the unit instead of repairing it (get the price, don't agree)"] : []),

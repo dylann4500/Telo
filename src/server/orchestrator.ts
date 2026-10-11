@@ -513,7 +513,9 @@ async function placeOne(task: TaskRow, user: UserRow, call: CallRow): Promise<bo
     authority: task.authority,
     history: task.memory?.summary || null,
     constraints: task.constraints,
-    calendar: Boolean(getCalendar()),
+    // A work order's vendor calls: the manager's calendar isn't the tenant's window, and spending goes to the owner.
+    calendar: Boolean(getCalendar()) && !maintenance.isMaintenance(task),
+    approver: maintenance.isMaintenance(task) ? "the owner" : undefined,
   });
   await db.update(calls).set({ instructions: rendered.instructions }).where(eq(calls.id, call.id));
 
