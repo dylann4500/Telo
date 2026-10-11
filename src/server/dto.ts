@@ -1,0 +1,151 @@
+import { asc, desc, eq, inArray } from "drizzle-orm";
+import type { CallDTO, LiveCallDTO, MessageDTO, QuestionDTO, StateDTO, TaskDetailDTO, TaskSummaryDTO } from "@/lib/types";
+import { config } from "./config";
+import { db } from "./db/client";
+import { calls, events, messages, questions, tasks, type CallRow, type QuestionRow, type TaskRow } from "./db/schema";
+import { redactFact } from "./redact";
+import { getUser } from "./tasks/repo";
+
+const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+
+function liveCall(c: CallRow | undefined): LiveCallDTO | null {
+  if (!c) return null;
+  return { id: c.id, target: c.targetName, status: c.status, statusDetail: c.statusDetail, startedAt: iso(c.startedAt), answeredAt: iso(c.answeredAt) };
+}
+
+function questionDTO(q: QuestionRow): QuestionDTO {
+  return {
+    id: q.id,
+    kind: q.kind,
+    prompt: q.prompt,
+    options: q.options,
+    fields: q.fields.map((f) => ({ key: f.key, label: f.label })),
+    status: q.status,
+    answeredAt: iso(q.answeredAt),
+  };
+}
+
+function summary(t: TaskRow, taskCalls: CallRow[], open: QuestionRow | undefined): TaskSummaryDTO {
+  const business = taskCalls.filter((c) => c.kind === "business");
+  return {
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    statusDetail: t.statusDetail,
+    category: t.category,
+    targets: t.targets.map((x) => x.name),
+    source: t.source,
+    createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+    live: liveCall(business.find((c) => ["queued", "ringing", "in_progress"].includes(c.status))),
+    waiting: open ? questionDTO(open) : null,
+    result: t.result,
+    memoryUsed: Boolean(t.memory?.summary),
+    callsMade: business.filter((c) => c.finishedAt).length,
+  };
+}
+
+export async function buildState(userId: string): Promise<StateDTO> {
+  const user = await getUser(userId);
+  const taskRows = await db.select().from(tasks).where(eq(tasks.userId, userId)).orderBy(desc(tasks.updatedAt)).limit(40);
+  const ids = taskRows.map((t) => t.id);
+  const callRows = ids.length ? await db.select().from(calls).where(inArray(calls.taskId, ids)) : [];
+  const openQs = ids.length ? await db.select().from(questions).where(inArray(questions.taskId, ids)) : [];
+  const msgRows = await db.select().from(messages).where(eq(messages.userId, userId)).orderBy(desc(messages.createdAt)).limit(80);
+  const userCall = await db.query.calls.findFirst({
+    where: eq(calls.kind, "user_inbound"),
+    orderBy: desc(calls.createdAt),
+  });
+  return {
+    modes: { llm: config.llm.provider, voice: config.voice.provider, memory: config.memory.provider, devTools: config.demo.devTools },
+    user: { name: user?.name ?? config.user.name, phone: user?.phone ?? null, channel: user?.channel ?? config.user.channel },
+    teloPhone: config.voice.teloPhone,
+    tasks: taskRows.map((t) =>
+      summary(
+        t,
+        callRows.filter((c) => c.taskId === t.id),
+        openQs.filter((q) => q.taskId === t.id && q.status === "open").at(-1),
+      ),
+    ),
+    messages: msgRows.reverse().map(messageDTO),
+    liveUserCall: userCall && ["ringing", "in_progress"].includes(userCall.status) ? liveCall(userCall) : null,
+  };
+}
+
+function messageDTO(m: typeof messages.$inferSelect): MessageDTO {
+  return {
+    id: m.id,
+    direction: m.direction,
+    channel: m.channel,
+    kind: m.kind,
+    body: m.body,
+    status: m.status,
+    error: m.error,
+    taskId: m.taskId,
+    createdAt: m.createdAt.toISOString(),
+  };
+}
+
+function callDTO(c: CallRow): CallDTO {
+  return {
+    id: c.id,
+    kind: c.kind,
+    direction: c.direction,
+    seq: c.seq,
+    attempt: c.attempt,
+    targetName: c.targetName,
+    purpose: c.purpose,
+    status: c.status,
+    statusDetail: c.statusDetail,
+    startedAt: iso(c.startedAt),
+    answeredAt: iso(c.answeredAt),
+    endedAt: iso(c.endedAt),
+    durationSec: c.durationSec,
+    endReason: c.endReason,
+    transcript: c.transcript.map((t) => ({ speaker: t.speaker, text: t.text })),
+    analysis: c.analysis
+      ? {
+          outcome: c.analysis.outcome,
+          summary: c.analysis.summary,
+          facts: c.analysis.facts,
+          offers: c.analysis.offers.map((o) => ({ kind: o.kind, description: o.description, priceUsd: o.priceUsd })),
+          commitments: c.analysis.commitments.map((x) => ({ kind: x.kind, description: x.description, amountUsd: x.amountUsd })),
+          priorCommitments: c.analysis.priorCommitments ?? [],
+          confirmationNumbers: c.analysis.confirmationNumbers,
+          repName: c.analysis.repName,
+          nextStep: c.analysis.nextStep,
+        }
+      : null,
+    instructions: c.instructions,
+  };
+}
+
+export async function buildTaskDetail(taskId: string): Promise<TaskDetailDTO | null> {
+  const t = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!t) return null;
+  const taskCalls = await db.select().from(calls).where(eq(calls.taskId, taskId)).orderBy(asc(calls.createdAt));
+  const qs = await db.select().from(questions).where(eq(questions.taskId, taskId)).orderBy(asc(questions.createdAt));
+  const evs = await db.select().from(events).where(eq(events.taskId, taskId)).orderBy(asc(events.occurredAt), asc(events.createdAt));
+  return {
+    ...summary(t, taskCalls, qs.filter((q) => q.status === "open").at(-1)),
+    request: t.request,
+    goal: t.goal,
+    facts: t.facts.map(redactFact).map((f) => ({ key: f.key, label: f.label, value: f.value, sensitive: f.sensitive, source: f.source })),
+    constraints: t.constraints,
+    authority: t.authority,
+    plan: t.plan ? { strategy: t.plan.strategy, parallel: t.plan.parallel, legs: t.plan.legs.map((l) => ({ targetName: l.targetName, purpose: l.purpose, objective: l.objective })) } : null,
+    memory: t.memory ? { ...t.memory, trace: t.memory.trace ?? [] } : null,
+    calls: taskCalls.filter((c) => c.status !== "planned" || c.kind === "business").map(callDTO),
+    questions: qs.map(questionDTO),
+    events: evs.map((e) => ({
+      id: e.id,
+      type: e.type,
+      summary: e.summary,
+      occurredAt: e.occurredAt.toISOString(),
+      mirrored: Boolean(e.typed),
+      synced: Boolean(e.memorySyncedAt),
+      syncError: e.memorySyncError,
+    })),
+    lastError: t.lastError,
+  };
+}
