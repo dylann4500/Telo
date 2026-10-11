@@ -8,6 +8,7 @@ import { isTaskBusy, kick } from "./orchestrator";
 import { statusDigest } from "./status";
 import { getVoice } from "./voice";
 import { normalizeDialEvent } from "./voice/dial-webhook";
+import { inboundPrompt } from "./voice/inbound-prompt";
 import { finishCall, ingestVoiceEvent } from "./voice/ingest";
 
 // One in-process loop that makes the system self-healing: retries task
@@ -138,21 +139,4 @@ async function refreshVoiceLine() {
   if (current?.value === prompt) return;
   await getVoice().setInboundInstruction(prompt);
   await db.insert(appState).values({ key, value: prompt }).onConflictDoUpdate({ target: appState.key, set: { value: prompt } });
-}
-
-export function inboundPrompt(digest: string): string {
-  const name = config.user.name;
-  const first = name.split(" ")[0];
-  return [
-    `You are Telo, ${name}'s personal assistant for anything that needs a phone call. This is Telo's own number, and ${first} is usually the one calling.`,
-    `Greet them briefly: "Hey ${first}, it's Telo."`,
-    "If they ask how something is going, call the get_status tool and tell them what it says, briefly.",
-    "If they ask you to handle something, answer a question you asked them, or make a decision you asked them for, call the ask_telo tool with exactly what they said, then tell them what it returns in your own words. If it returns a question, ask it, and pass their answer to ask_telo the same way.",
-    "Only state what the tools return or what is below. Never make up status, prices or confirmation numbers.",
-    "If a tool fails, say you'll text them shortly. Keep the call short and natural.",
-    "If the caller isn't the owner of this line, take a message and don't share any task details.",
-    digest ? `Status as of a few minutes ago:\n${digest}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
 }

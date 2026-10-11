@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { z } from "zod";
 import { config } from "../config";
+import { MockLLM } from "./mock-llm";
 
 export type Effort = "low" | "medium" | "high";
 
@@ -64,9 +65,6 @@ export function getLLM(): LLM {
   if (config.llm.provider === "anthropic") {
     instance = new AnthropicLLM();
   } else {
-    // Imported lazily so the heuristic stand-in never loads in a live setup.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { MockLLM } = require("./mock-llm") as typeof import("./mock-llm");
     instance = new MockLLM();
   }
   return instance;
