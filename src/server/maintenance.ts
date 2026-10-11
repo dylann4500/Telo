@@ -3,7 +3,7 @@ import * as agent from "./agent";
 import type { TriageResult } from "./agent/schemas";
 import { config } from "./config";
 import { db } from "./db/client";
-import { messages, questions, tasks, type CallRow, type QuestionRow, type TaskRow } from "./db/schema";
+import { calls, messages, questions, tasks, type CallRow, type QuestionRow, type TaskRow } from "./db/schema";
 import type { ApprovalOption, Authority, EntityRefs, Fact, MemoryBrief, MessageParty, TaskContext } from "./domain/types";
 import { TERMINAL_STATUSES } from "./domain/types";
 import { newId } from "./ids";
@@ -31,6 +31,8 @@ import { getVoice } from "./voice";
 export const isMaintenance = (t: Pick<TaskRow, "context"> | null | undefined): t is TaskRow & { context: TaskContext } => t?.context?.kind === "maintenance";
 
 const firstName = (name: string) => name.split(" ")[0];
+/** The number to dial for a vendor. On a real line, a seeded (fictional) number rings the demo stand-in phone instead. */
+const dialable = (phone: string): string | null => (config.voice.provider === "mock" || !isFictional(phone) ? phone : config.demo.targetPhone);
 const usd = (cents: number) => `$${Math.round(cents / 100).toLocaleString("en-US")}`;
 const YES = /^\s*(y|yes|yeah|yep|yup|ok|okay|sure|confirm(ed)?|correct|fixed|all good|works?( now)?|it'?s (fixed|working|good))\b/i;
 const NO = /^\s*(n|no|nope|not (yet|fixed|really)|still (broken|not)|didn'?t|doesn'?t|it'?s not)\b/i;
@@ -360,7 +362,7 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
       title: `${r.title} at ${home.unit.label.replace(/^\d+ /, "")}`,
       goal,
       category: "quotes",
-      targets: picks.map((s) => ({ name: s.vendor.name, phone: s.vendor.phone, kind: "business" as const })),
+      targets: picks.map((s) => ({ name: s.vendor.name, phone: dialable(s.vendor.phone), kind: "business" as const })),
       facts,
       constraints: [
         `Open by saying you're an AI assistant calling for ${config.user.name} at ${FIRM.name}, and that the call is recorded`,
@@ -534,7 +536,15 @@ export async function afterCalls(task: TaskRow & { context: TaskContext }): Prom
     const price = priceOf(c);
     return c.analysis!.booking && ["success", "partial"].includes(c.analysis!.outcome) && (price == null || price <= limitCents || ownerApproved(c.id));
   });
-  if (booked) return book(task, booked, ownerApproved(booked.id), user.timezone);
+  if (booked) {
+    // Legs still waiting their turn aren't needed now.
+    await db.update(calls).set({ status: "canceled", statusDetail: `Booked ${booked.targetName}` }).where(and(eq(calls.taskId, task.id), eq(calls.status, "planned")));
+    return book(task, booked, ownerApproved(booked.id), user.timezone);
+  }
+
+  // One phone answers for every vendor (the demo stand-in): the rest of this round goes one call at a time.
+  const queued = (await listCalls(task.id)).filter((c) => c.kind === "business" && c.status === "planned");
+  if (queued.length) return Boolean(await transitionTask(task.id, "ready", { statusDetail: `Calling ${queued[0].targetName}` }, ["reviewing"]));
 
   // The manager picked a vendor from the comparison: call them back to book.
   const decided = task.followUp?.userDecision ?? "";
@@ -589,7 +599,7 @@ export async function afterCalls(task: TaskRow & { context: TaskContext }): Prom
         task.id,
         "planning",
         {
-          targets: [...task.targets.filter((t) => t.name !== next.name), { name: next.name, phone: next.phone, kind: "business" as const }],
+          targets: [...task.targets.filter((t) => t.name !== next.name), { name: next.name, phone: dialable(next.phone), kind: "business" as const }],
           followUp: { reason: "callback", userDecision: task.followUp?.userDecision ?? null, callback: { targetName: next.name, purpose: "Earliest visit and price", objective: task.goal ?? "Find the earliest visit and price", talkingPoints: [] } },
           statusDetail: `Calling ${next.name}`,
         },
@@ -851,7 +861,7 @@ export async function vendorNoShow(task: TaskRow & { context: TaskContext }): Pr
     "planning",
     {
       wakeAt: null,
-      targets: [...task.targets.filter((t) => t.name !== next.name), { name: next.name, phone: next.phone, kind: "business" as const }],
+      targets: [...task.targets.filter((t) => t.name !== next.name), { name: next.name, phone: dialable(next.phone), kind: "business" as const }],
       context: { ...ctx, stage: "dispatching", booked: undefined, accessConfirmed: false, voided: [...(ctx.voided ?? []), key] },
       followUp: { reason: "callback", userDecision: null, callback: { targetName: next.name, purpose: "Earliest visit and price: the booked vendor didn't show", objective: `${task.goal ?? ""} The vendor we booked didn't show, so get the earliest visit you can.`.trim(), talkingPoints: ["The last vendor didn't show"] } },
       statusDetail: `${vendor?.name} didn't show; calling ${next.name}`,

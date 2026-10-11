@@ -450,7 +450,7 @@ async function plan(task: TaskRow): Promise<boolean> {
     later ? "scheduled" : "ready",
     {
       // A work order calls its vendors at once, to compare availability and price.
-      plan: { strategy: p.strategy, parallel: maintenance.isMaintenance(task) ? legs.length > 1 : p.parallel, legs: [...(task.plan?.legs ?? []), ...legs] },
+      plan: { strategy: p.strategy, parallel: maintenance.isMaintenance(task) ? legs.length > 1 && new Set(legs.map((l) => l.targetPhone)).size === legs.length : p.parallel, legs: [...(task.plan?.legs ?? []), ...legs] },
       memory,
       followUp: null,
       wakeAt: later,

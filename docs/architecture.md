@@ -34,7 +34,7 @@ A maintenance task carries `tasks.context` (`kind: "maintenance"`): its unit, pr
 
 Booking, follow-up and close events are keyed by the booked call, so a second booking on the same work order (after a no-show, or a repair that didn't hold) gets its own events. An email never settles a work order; the tenant's "fixed?" does.
 
-**Phones:** the seeded portfolio's numbers are fictional (555-01xx); `TELO_PORTFOLIO_PHONES` maps party ids to real phones for a live demo, and Telo never texts a fictional number on a real line.
+**Phones:** the seeded portfolio's numbers are fictional (555-01xx); `TELO_PORTFOLIO_PHONES` maps party ids to real phones for a live demo, and Telo never texts a fictional number on a real line. On a real line, a vendor still on a fictional number rings `DEMO_TARGET_PHONE` instead. When two vendors would ring the same phone, they're called one at a time.
 
 ## Webhooks and events
 
