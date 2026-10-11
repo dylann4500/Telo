@@ -5,7 +5,6 @@ import type { Authority, CallBrief, Fact } from "../domain/types";
 
 export interface RenderedCall {
   instructions: string;
-  firstMessage: string;
 }
 
 function bullets(items: string[]): string {
@@ -69,6 +68,8 @@ export function renderCallInstructions(input: {
     `You are Telo, an AI assistant making a phone call to ${leg.targetName} on behalf of ${userName}. Say you are an AI assistant calling for ${userName} when you introduce yourself, and answer honestly if asked.`,
     `## How to talk\n${bullets(HOW_TO_TALK)}`,
     `## Goal of this call\n${leg.objective}`,
+    // Dial has no first-message setting: the planned opening goes in the brief.
+    leg.openingLine?.trim() ? `## How to open (once they've said hello)\n"${leg.openingLine.trim()}"` : "",
     input.history ? `## What happened before (use it; state it exactly as written)\n${input.history}` : "",
     `## Points to cover, one at a time\n${bullets(unique(leg.talkingPoints, 4))}`,
     `## Details you may share, only when they ask or it is needed\n${bullets(shareableDetails(userName, leg, input.facts))}`,
@@ -108,8 +109,5 @@ export function renderCallInstructions(input: {
     "Remember: two sentences at most, then let them talk.",
   ];
 
-  return {
-    instructions: sections.filter(Boolean).join("\n\n"),
-    firstMessage: leg.openingLine,
-  };
+  return { instructions: sections.filter(Boolean).join("\n\n") };
 }
