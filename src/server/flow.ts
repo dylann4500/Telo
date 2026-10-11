@@ -39,7 +39,7 @@ function clip(text: string | null | undefined, n = 120): { detail: string | null
 }
 
 /** "Asked you for: Account number" → "Account number". */
-const after = (summary: string) => summary.replace(/^[^:]{0,60}:\s*/, "");
+const after = (summary: string) => summary.replace(/^[^:]{0,60}:\s*/, "").replace(/^./, (c) => c.toUpperCase());
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`;
 
 function step(kind: Step["kind"], id: string, at: Date, fields: Partial<Step> & { title: string }): Step {

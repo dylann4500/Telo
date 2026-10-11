@@ -275,4 +275,21 @@ describe("who may use which tool", () => {
     const nothingAsked = await m.live.callTool("wait_for_customer", {}, headers);
     expect(nothingAsked.text).toMatch(/haven't asked/);
   });
+
+  it("an answer given on Telo's call to the user reaches the waiting business call", async () => {
+    const id = "tsk_live_voice";
+    await m.db.db.insert(m.schema.tasks).values({ id, userId: "usr_default", title: "Fix the Quarry Water bill", request: "Fix the Quarry Water bill", source: "web", status: "calling", targets: [{ name: "Quarry Water", phone: "+14155550398", kind: "business" }] });
+    await m.db.db.insert(m.schema.calls).values({ id: "call_live_voice_biz", userId: "usr_default", taskId: id, direction: "outbound", kind: "business", seq: 1, targetName: "Quarry Water", targetPhone: "+14155550398", purpose: "Fix the bill", status: "in_progress" });
+    const business = { direction: "outbound", other: "+14155550398" };
+    const asked = await m.live.callTool("ask_customer", { detail: "Account number", question: "What's the account number on your Quarry Water bill?" }, business);
+    expect(asked.text).toMatch(/Texted Dylan/);
+    // Telo rings the user about it (a user_update call); the user says the number on that call.
+    await m.db.db.insert(m.schema.calls).values({ id: "call_live_voice_user", userId: "usr_default", taskId: id, direction: "outbound", kind: "user_update", seq: -1, targetName: "Dylan", targetPhone: "+15555550177", purpose: "Update for Dylan", status: "in_progress" });
+    const spoken = await m.live.callTool("ask_telo", { message: "It's 99881" }, { direction: "outbound", other: "+15555550177" });
+    expect(spoken.text).toMatch(/Telling Quarry Water now/);
+    const got = await m.live.callTool("wait_for_customer", {}, business);
+    expect(got.text).toMatch(/Account number: (It's )?99881/i);
+    // A business can't use the owner's tools, even on a live call.
+    expect((await m.live.callTool("get_status", {}, business)).isError).toBe(true);
+  });
 });
