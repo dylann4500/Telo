@@ -29,6 +29,8 @@ export const config = {
   llm: {
     provider: pick("LLM_PROVIDER", ["anthropic", "mock"] as const, env("ANTHROPIC_API_KEY") ? "anthropic" : "mock"),
     model: env("TELO_MODEL") ?? "claude-opus-5-5",
+    // Quick, frequent steps (sorting a text, status replies, summaries).
+    fastModel: env("TELO_MODEL_FAST") ?? env("TELO_MODEL") ?? "claude-opus-5-5",
   },
 
   voice: {

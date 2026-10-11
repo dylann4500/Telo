@@ -36,6 +36,7 @@ export function routeInbound(input: {
 }) {
   return getLLM().structured({
     name: "route-inbound",
+    tier: "fast",
     system: P.ROUTE_SYSTEM,
     prompt: context({
       now: input.now,
@@ -163,6 +164,7 @@ export function decideNext(input: {
 export function answerStatus(input: { question: string; now: string; tasks: unknown[]; history: unknown[] }) {
   return getLLM().structured({
     name: "answer-status",
+    tier: "fast",
     system: P.STATUS_SYSTEM,
     prompt: context({ now: input.now, tasks: input.tasks, history: input.history, question: input.question }),
     schema: S.StatusReplySchema,
@@ -177,6 +179,7 @@ export function briefHistory(input: {
 }) {
   return getLLM().structured({
     name: "brief-history",
+    tier: "fast",
     system: P.HISTORY_SYSTEM,
     prompt: context({ business: input.business, new_task: input.task, history_events: input.events }),
     schema: S.HistoryBriefSchema,
@@ -187,6 +190,7 @@ export function briefHistory(input: {
 export function simulateCall(input: { business: string; instructions: string; scenario: string }) {
   return getLLM().structured({
     name: "simulate-call",
+    tier: "fast",
     system: P.SIMULATE_SYSTEM,
     prompt: context({ business: input.business, scenario: input.scenario, agent_instructions: input.instructions }),
     schema: S.SimulatedCallSchema,

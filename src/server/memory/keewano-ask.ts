@@ -77,6 +77,7 @@ export async function askKeewano(question: string, userId: string): Promise<{ an
   const ms = Date.now() - started;
   const answer = await llm.structured({
     name: "keewano-answer",
+    tier: "fast",
     system: "Answer the user's question from the query result in one or two short sentences, text-message style. Translate ids into business names using the entity list. If the result is empty, say there's no record of it.",
     prompt: `<question>\n${question}\n</question>\n\n<entities>\n${JSON.stringify(entities)}\n</entities>\n\n<sql>\n${sql}\n</sql>\n\n<rows>\n${JSON.stringify(rows.slice(0, 50))}\n</rows>`,
     schema: AnswerSchema,

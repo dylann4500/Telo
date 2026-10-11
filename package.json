@@ -13,7 +13,8 @@
     "keewano:check": "tsx scripts/keewano-check.ts",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "llm:check": "tsx scripts/llm-check.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

@@ -14,7 +14,12 @@ export interface StructuredRequest<S extends z.ZodType> {
   schema: S;
   effort?: Effort;
   maxTokens?: number;
+  /** "fast" steps run on TELO_MODEL_FAST; everything else on TELO_MODEL. */
+  tier?: "main" | "fast";
 }
+
+// Server-side refusal fallback exists for these families only (not Haiku).
+const SUPPORTS_FALLBACK = /^claude-(opus|sonnet|fable)/;
 
 /**
  * Telo's only dependency on a model provider. Every call returns data that
@@ -34,16 +39,16 @@ class AnthropicLLM implements LLM {
 
   async structured<S extends z.ZodType>(req: StructuredRequest<S>): Promise<z.infer<S>> {
     const started = Date.now();
+    const model = req.tier === "fast" ? config.llm.fastModel : config.llm.model;
     const response = await this.client.beta.messages.parse({
-      model: config.llm.model,
+      model,
       max_tokens: req.maxTokens ?? 8000,
       system: req.system,
       messages: [{ role: "user", content: req.prompt }],
       output_config: { format: betaZodOutputFormat(req.schema), effort: req.effort ?? "medium" },
       // If a safety classifier declines, the API retries on a fallback model
       // inside the same request instead of failing the task.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...(SUPPORTS_FALLBACK.test(model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
     });
     if (response.stop_reason === "refusal") {
       throw new Error(`${req.name}: model declined the request`);
@@ -52,7 +57,7 @@ class AnthropicLLM implements LLM {
     if (parsed === null || parsed === undefined) {
       throw new Error(`${req.name}: model returned no parsable output (stop_reason=${response.stop_reason})`);
     }
-    console.info(`[llm] ${req.name} ok in ${Date.now() - started}ms`);
+    console.info(`[llm] ${req.name} (${model}) ok in ${Date.now() - started}ms`);
     return parsed as z.infer<S>;
   }
 }
