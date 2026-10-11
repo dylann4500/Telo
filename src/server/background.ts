@@ -21,7 +21,7 @@ import { finishCall, ingestVoiceEvent } from "./voice/ingest";
 // failed webhook processing, mirrors events to memory, nudges the user about
 // unanswered questions, reads new email, and keeps the voice line's prompt current.
 
-const g = globalThis as unknown as { __teloLoop?: ReturnType<typeof setInterval>; __teloTicking?: boolean; __teloTicks?: number };
+const g = globalThis as unknown as { __teloLoop?: ReturnType<typeof setInterval>; __teloTicking?: boolean; __teloTicks?: number; __teloVoiceLinePushed?: boolean };
 
 export function startBackgroundLoop() {
   if (g.__teloLoop) return;
@@ -216,7 +216,9 @@ async function refreshVoiceLine() {
   const prompt = inboundPrompt(digest);
   const key = "dial.inbound_prompt";
   const current = await db.query.appState.findFirst({ where: eq(appState.key, key) });
-  if (current?.value === prompt) return;
+  // Once per process it's pushed anyway: dial:setup resets the prompt on Dial's side without touching app_state.
+  if (current?.value === prompt && g.__teloVoiceLinePushed) return;
   await getVoice().setInboundInstruction(prompt);
+  g.__teloVoiceLinePushed = true;
   await db.insert(appState).values({ key, value: prompt }).onConflictDoUpdate({ target: appState.key, set: { value: prompt } });
 }

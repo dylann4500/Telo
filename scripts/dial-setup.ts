@@ -110,7 +110,7 @@ async function main() {
     console.log(
       status === "approved"
         ? "● Texting     10DLC approved: SMS replies reach US phones"
-        : `○ Texting     10DLC ${status}: US carriers block SMS replies from this number until it's approved. Texts TO Telo still work. Options: an iMessage number, a pre-approved number from Dial, or TELO_USER_CHANNEL=voice.`,
+        : `○ Texting     10DLC ${status}: US carriers block SMS replies from this number until it's approved. Texts TO Telo still work. Options: an iMessage number, a pre-approved number from Dial, or keep updates on Text + call (dashboard) so Telo phones you.`,
     );
   } else {
     console.log("● Texting     iMessage number: replies don't need 10DLC (have the user text first)");
