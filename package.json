@@ -11,7 +11,9 @@
     "tunnel": "tsx scripts/tunnel.ts",
     "dial:setup": "tsx scripts/dial-setup.ts",
     "keewano:check": "tsx scripts/keewano-check.ts",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
