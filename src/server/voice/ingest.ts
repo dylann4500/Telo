@@ -143,8 +143,13 @@ async function onCallEnded(e: Extract<VoiceEvent, { kind: "call.ended" }>) {
       statusDetail: status === "ended" ? "Call ended" : e.endReason === "no-answer" ? "No answer" : e.endReason === "busy" ? "Busy" : "Call failed",
     })
     .where(eq(calls.id, call.id));
-  // No transcript is coming for unanswered or failed calls; finish now.
-  if (!e.transcriptAvailable) await finishCall(call.id);
+  // A call that never connected has no transcript coming: finish now. An
+  // answered call waits for call.transcribed. Dial reports
+  // transcriptAvailable=false at hang-up even when the transcript follows a
+  // second later, so it can't be trusted here. The background loop finishes
+  // the call anyway if the transcript never comes.
+  const connected = Boolean(call.answeredAt) || (e.durationSec ?? 0) > 0;
+  if (status !== "ended" || !connected) await finishCall(call.id);
 }
 
 async function onTranscribed(providerCallId: string) {
