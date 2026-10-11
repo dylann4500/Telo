@@ -17,7 +17,8 @@
     "llm:check": "tsx scripts/llm-check.ts",
     "lab": "tsx scripts/edge-lab.ts",
     "lab:calls": "tsx scripts/call-lab.ts",
-    "google:connect": "tsx scripts/google-connect.ts"
+    "google:connect": "tsx scripts/google-connect.ts",
+    "seed:portfolio": "tsx scripts/portfolio-seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

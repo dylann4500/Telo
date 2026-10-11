@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { config } from "@/server/config";
 import { ensureDb } from "@/server/db/client";
-import { resetAll, seedBaseline, seedDemoHistory } from "@/server/db/seed";
+import { resetAll, seedBaseline } from "@/server/db/seed";
+import { seedPortfolioHistory } from "@/server/portfolio/history";
 import { syncPendingEvents } from "@/server/memory/events";
 import { getVoice } from "@/server/voice";
 import { MockVoice } from "@/server/voice/mock";
@@ -35,8 +36,9 @@ export async function POST(req: Request, ctx: RouteContext<"/api/dev/[action]">)
   const { action } = await ctx.params;
   switch (action) {
     case "seed": {
-      const r = await seedDemoHistory();
-      await syncPendingEvents(100);
+      // The portfolio's history before Telo: what Keewano knows on day one.
+      const r = await seedPortfolioHistory();
+      await syncPendingEvents(200);
       return Response.json({ ok: true, ...r });
     }
     case "reset": {

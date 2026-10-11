@@ -1,10 +1,25 @@
-import type { TypedFacts } from "../domain/types";
+import type { EntityRefs, TypedFacts } from "../domain/types";
 
 // Telo's event memory: the ordered history of what happened between the
 // user, Telo and each business. Keewano is the real backend; the local
 // provider reads the same events straight from SQLite for development.
 
-export type EntityType = "user" | "task" | "org" | "call" | "relationship";
+export type EntityType =
+  | "user"
+  | "task"
+  | "org"
+  | "call"
+  | "relationship"
+  // Property management streams (docs/property-management/research.md section 5.2).
+  | "pm"
+  | "owner"
+  | "property"
+  | "unit"
+  | "asset"
+  | "vendor"
+  | "tenancy"
+  | "prospect"
+  | "agency";
 
 export interface EntityRef {
   type: EntityType;
@@ -22,6 +37,7 @@ export interface MemoryEvent {
   callId: string | null;
   orgKey: string | null;
   typed: TypedFacts | null; // the part mirrored to Keewano; null = local-only
+  refs?: EntityRefs | null; // portfolio streams the event belongs to
   source?: "keewano" | "local";
 }
 

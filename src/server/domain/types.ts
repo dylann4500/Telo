@@ -158,6 +158,88 @@ export interface TypedFacts {
   confirmationNumber?: string;
   briefUsed?: boolean;
   emailKind?: string;
+  // Property management (docs/property-management/research.md section 5.3).
+  trade?: Trade;
+  severity?: Severity;
+  intakeChannel?: "sms" | "mms" | "call" | "email";
+  photoCount?: number;
+  fixCode?: string;
+  secsToResolve?: number;
+  emergencyKind?: string;
+  emergencyRoute?: "tenant_911" | "utility" | "oncall" | "vendor" | "deescalated";
+  secsToHuman?: number;
+  jobCode?: string;
+  quoteCents?: number;
+  tripFeeCents?: number;
+  warrantyDays?: number;
+  earliestSlotHours?: number;
+  declineReason?: "busy" | "out_of_area" | "wrong_trade" | "no_answer" | "price";
+  dispatchRank?: number;
+  bookedCents?: number;
+  approvalResponseSeconds?: number;
+  approvalChannel?: "sms" | "voice" | "dashboard";
+  approvalWhileHolding?: boolean;
+  noticePurpose?: "repair" | "inspection" | "preventive" | "showing";
+  noticeHours?: number;
+  noticeMethod?: "sms" | "email" | "posted" | "mail";
+  accessOutcome?: "done" | "no_access" | "rescheduled" | "tenant_cancelled";
+  reschedules?: number;
+  commitmentLateMinutes?: number;
+  vendorOutcome?: "on_time" | "late" | "no_show" | "cancelled";
+  lateMinutes?: number;
+  woOutcome?: "fixed_first_visit" | "fixed_multi_visit" | "not_fixed" | "cancelled";
+  visits?: number;
+  daysToFix?: number;
+  invoiceOverQuotePct?: number;
+  tenantConfirmed?: boolean;
+  managerTouches?: number;
+  daysSinceDone?: number;
+  assetType?: AssetType;
+  installYear?: number;
+  repairCents?: number;
+  repeatWithin90d?: boolean;
+  decision?: "repair" | "replace" | "defer";
+  replaceCents?: number;
+  assetAgeYears?: number;
+  callParty?: PartyRole;
+}
+
+export const TRADES = ["plumbing", "hvac", "electrical", "appliance", "roof", "pest", "locks", "landscape", "cleaning", "paint", "flooring", "general"] as const;
+export type Trade = (typeof TRADES)[number];
+export const SEVERITIES = ["emergency", "urgent", "routine", "cosmetic"] as const;
+export type Severity = (typeof SEVERITIES)[number];
+export const ASSET_TYPES = ["water_heater", "furnace", "ac", "heat_pump", "fridge", "range", "dishwasher", "washer", "dryer", "roof", "garage_door"] as const;
+export type AssetType = (typeof ASSET_TYPES)[number];
+export type PartyRole = "manager" | "owner" | "tenant" | "vendor" | "agency" | "prospect";
+
+/** The portfolio entities an event belongs to; they pick its Keewano streams. Ids only, never names. */
+export interface EntityRefs {
+  owner?: string;
+  property?: string;
+  unit?: string;
+  asset?: string;
+  vendor?: string;
+  tenancy?: string;
+  agency?: string;
+  prospect?: string;
+}
+
+/** What a property-management task is about, beyond the call engine's own fields. */
+export interface TaskContext extends EntityRefs {
+  kind: "maintenance";
+  trade?: Trade;
+  severity?: Severity;
+  jobCode?: string;
+  photoCount?: number;
+  /** Vendors in scorecard order, best first, as ranked when the task was planned. */
+  ranked?: string[];
+}
+
+/** Who a message went to or came from, when it isn't the property manager. */
+export interface MessageParty {
+  role: PartyRole;
+  id: string;
+  name: string;
 }
 
 export const OFFER_KINDS = ["retention_discount", "quote", "fee_waiver", "payment_plan", "upgrade", "other"] as const;

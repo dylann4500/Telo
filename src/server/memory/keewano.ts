@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import pg from "pg";
-import { and, eq, gte, isNotNull } from "drizzle-orm";
+import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "../db/client";
 import { events as eventsTable } from "../db/schema";
-import type { TypedFacts } from "../domain/types";
+import type { EntityRefs, TypedFacts } from "../domain/types";
 import { rowToMemoryEvent } from "./local";
 import type { EntityRef, EntityType, MemoryEvent, MemoryProvider, MemoryTrace, TimelineQuery } from "./provider";
 
@@ -57,7 +57,58 @@ export const CATALOG: readonly CatalogEntry[] = [
   { eventTypeId: 2023, name: "message_sent", dataType: "string" },
   { eventTypeId: 2024, name: "email_received", dataType: "string" },
   { eventTypeId: 2025, name: "email_amount_cents", dataType: "price_usd_cent" },
+  // Property management, P0 (docs/property-management/research.md section 5.3, items 1-15, in order).
+  { eventTypeId: 2026, name: "wo_opened", dataType: "string" },
+  { eventTypeId: 2027, name: "severity", dataType: "string" },
+  { eventTypeId: 2028, name: "intake_channel", dataType: "string" },
+  { eventTypeId: 2029, name: "photo_count", dataType: "uint" },
+  { eventTypeId: 2030, name: "wo_deflected", dataType: "string" },
+  { eventTypeId: 2031, name: "secs_to_resolve", dataType: "uint" },
+  { eventTypeId: 2032, name: "emergency_routed", dataType: "string" },
+  { eventTypeId: 2033, name: "emergency_route", dataType: "string" },
+  { eventTypeId: 2034, name: "secs_to_human", dataType: "uint" },
+  { eventTypeId: 2035, name: "quote_received", dataType: "string" },
+  { eventTypeId: 2036, name: "job_code", dataType: "string" },
+  { eventTypeId: 2037, name: "quote_cents", dataType: "price_usd_cent" },
+  { eventTypeId: 2038, name: "trip_fee_cents", dataType: "price_usd_cent" },
+  { eventTypeId: 2039, name: "warranty_days", dataType: "uint" },
+  { eventTypeId: 2040, name: "earliest_slot_hours", dataType: "uint" },
+  { eventTypeId: 2041, name: "vendor_declined", dataType: "string" },
+  { eventTypeId: 2042, name: "vendor_booked", dataType: "string" },
+  { eventTypeId: 2043, name: "dispatch_rank", dataType: "uint" },
+  { eventTypeId: 2044, name: "booked_cents", dataType: "price_usd_cent" },
+  { eventTypeId: 2045, name: "approval_response_seconds", dataType: "uint" },
+  { eventTypeId: 2046, name: "approval_channel", dataType: "string" },
+  { eventTypeId: 2047, name: "approval_while_holding", dataType: "bool" },
+  { eventTypeId: 2048, name: "entry_notice_sent", dataType: "string" },
+  { eventTypeId: 2049, name: "notice_hours", dataType: "uint" },
+  { eventTypeId: 2050, name: "notice_method", dataType: "string" },
+  { eventTypeId: 2051, name: "access_outcome", dataType: "string" },
+  { eventTypeId: 2052, name: "reschedules", dataType: "uint" },
+  { eventTypeId: 2053, name: "commitment_late_minutes", dataType: "uint" },
+  { eventTypeId: 2054, name: "vendor_outcome", dataType: "string" },
+  { eventTypeId: 2055, name: "late_minutes", dataType: "uint" },
+  { eventTypeId: 2056, name: "wo_completed", dataType: "string" },
+  { eventTypeId: 2057, name: "visits", dataType: "uint" },
+  { eventTypeId: 2058, name: "days_to_fix", dataType: "uint" },
+  { eventTypeId: 2059, name: "invoice_over_quote_pct", dataType: "uint" },
+  { eventTypeId: 2060, name: "tenant_confirmed", dataType: "bool" },
+  { eventTypeId: 2061, name: "manager_touches", dataType: "uint" },
+  { eventTypeId: 2062, name: "callback_opened", dataType: "string" },
+  { eventTypeId: 2063, name: "days_since_done", dataType: "uint" },
+  { eventTypeId: 2064, name: "asset_registered", dataType: "string" },
+  { eventTypeId: 2065, name: "install_year", dataType: "uint" },
+  { eventTypeId: 2066, name: "asset_repaired", dataType: "string" },
+  { eventTypeId: 2067, name: "repair_cents", dataType: "price_usd_cent" },
+  { eventTypeId: 2068, name: "repeat_within_90d", dataType: "bool" },
+  { eventTypeId: 2069, name: "repair_vs_replace", dataType: "string" },
+  { eventTypeId: 2070, name: "replace_cents", dataType: "price_usd_cent" },
+  { eventTypeId: 2071, name: "asset_age_years", dataType: "uint" },
+  { eventTypeId: 2072, name: "call_party", dataType: "string" },
 ];
+
+/** The columns that came before property management; the consumer streams only ever hold these. */
+const LEGACY_COLUMNS = new Set(CATALOG.filter((c) => c.eventTypeId <= 2025).map((c) => c.name));
 
 const BY_NAME = new Map(CATALOG.map((c) => [c.name, c]));
 const BY_ID = new Map(CATALOG.map((c) => [c.eventTypeId, c]));
@@ -133,10 +184,48 @@ const ANCHORS: Record<string, string> = {
   "approval.denied": "approval_denied",
   "message.sent": "message_sent",
   "email.received": "email_received",
+  "wo.opened": "wo_opened",
+  "wo.deflected": "wo_deflected",
+  "emergency.routed": "emergency_routed",
+  "quote.received": "quote_received",
+  "vendor.declined": "vendor_declined",
+  "vendor.booked": "vendor_booked",
+  "entry_notice.sent": "entry_notice_sent",
+  "access.outcome": "access_outcome",
+  "vendor.outcome": "vendor_outcome",
+  "wo.completed": "wo_completed",
+  "callback.opened": "callback_opened",
+  "asset.registered": "asset_registered",
+  "asset.repaired": "asset_repaired",
+  "asset.decision": "repair_vs_replace",
 };
 
 function anchorValue(type: string, t: TypedFacts): string {
   switch (type) {
+    case "wo.opened":
+    case "quote.received":
+    case "vendor.booked":
+    case "callback.opened":
+      return t.trade ?? "general";
+    case "wo.deflected":
+      return t.fixCode ?? "other";
+    case "emergency.routed":
+      return t.emergencyKind ?? "water";
+    case "vendor.declined":
+      return t.declineReason ?? "busy";
+    case "entry_notice.sent":
+      return t.noticePurpose ?? "repair";
+    case "access.outcome":
+      return t.accessOutcome ?? "done";
+    case "vendor.outcome":
+      return t.vendorOutcome ?? "on_time";
+    case "wo.completed":
+      return t.woOutcome ?? "fixed_first_visit";
+    case "asset.registered":
+    case "asset.repaired":
+      return t.assetType ?? "other";
+    case "asset.decision":
+      return t.decision ?? "repair";
     case "task.created":
       return t.taskKind ?? "other";
     case "task.completed":
@@ -186,17 +275,85 @@ export function toKeewanoEvents(e: Pick<MemoryEvent, "type" | "occurredAt" | "ty
   const cents = (n: number | undefined) => (n == null ? null : Math.max(0, Math.round(n)));
   const out: KEvent[] = [ev("entity_kind", kind)];
   // Business-issued codes go on the user's own streams only, never the
-  // cross-user business stream.
-  const personal = kind !== "org";
+  // cross-user business stream (or a vendor's or agency's, shared across tasks).
+  const personal = kind !== "org" && kind !== "vendor" && kind !== "agency";
+  const uint = (name: string, n: number | undefined) => {
+    if (n != null && Number.isFinite(n)) out.push(ev(name, Math.max(0, Math.round(n))));
+  };
+  const str = (name: string, s: string | undefined) => {
+    if (s) out.push(ev(name, s.slice(0, 64)));
+  };
+  const bool = (name: string, b: boolean | undefined) => {
+    if (b !== undefined) out.push(ev(name, b));
+  };
+  const price = (name: string, n: number | undefined) => {
+    if (n != null) out.push(ev(name, cents(n)));
+  };
 
   switch (e.type) {
     case "call.started":
       if (t.briefUsed !== undefined) out.push(ev("memory_brief_used", t.briefUsed));
+      str("call_party", t.callParty);
       break;
     case "call.completed":
     case "call.failed":
       if (t.holdSeconds != null) out.push(ev("hold_seconds", Math.round(t.holdSeconds)));
       if (t.durationSeconds != null) out.push(ev("call_duration_seconds", Math.round(t.durationSeconds)));
+      str("call_party", t.callParty);
+      break;
+    case "wo.opened":
+      str("severity", t.severity);
+      str("intake_channel", t.intakeChannel);
+      uint("photo_count", t.photoCount);
+      break;
+    case "wo.deflected":
+      uint("secs_to_resolve", t.secsToResolve);
+      break;
+    case "emergency.routed":
+      str("emergency_route", t.emergencyRoute);
+      uint("secs_to_human", t.secsToHuman);
+      break;
+    case "quote.received":
+      str("job_code", t.jobCode);
+      price("quote_cents", t.quoteCents);
+      price("trip_fee_cents", t.tripFeeCents);
+      uint("warranty_days", t.warrantyDays);
+      uint("earliest_slot_hours", t.earliestSlotHours);
+      break;
+    case "vendor.booked":
+      uint("dispatch_rank", t.dispatchRank);
+      price("booked_cents", t.bookedCents);
+      break;
+    case "entry_notice.sent":
+      uint("notice_hours", t.noticeHours);
+      str("notice_method", t.noticeMethod);
+      break;
+    case "access.outcome":
+      uint("reschedules", t.reschedules);
+      break;
+    case "vendor.outcome":
+      uint("late_minutes", t.lateMinutes);
+      break;
+    case "wo.completed":
+      uint("visits", t.visits);
+      uint("days_to_fix", t.daysToFix);
+      uint("invoice_over_quote_pct", t.invoiceOverQuotePct);
+      bool("tenant_confirmed", t.tenantConfirmed);
+      uint("manager_touches", t.managerTouches);
+      break;
+    case "callback.opened":
+      uint("days_since_done", t.daysSinceDone);
+      break;
+    case "asset.registered":
+      uint("install_year", t.installYear);
+      break;
+    case "asset.repaired":
+      price("repair_cents", t.repairCents);
+      bool("repeat_within_90d", t.repeatWithin90d);
+      break;
+    case "asset.decision":
+      price("replace_cents", t.replaceCents);
+      uint("asset_age_years", t.assetAgeYears);
       break;
     case "offer.received":
     case "offer.accepted":
@@ -209,6 +366,7 @@ export function toKeewanoEvents(e: Pick<MemoryEvent, "type" | "occurredAt" | "ty
       if (personal && t.confirmationNumber) out.push(ev("confirmation_number", t.confirmationNumber.slice(0, 64)));
       if (t.amountCents != null) out.push(ev("commitment_amount_cents", cents(t.amountCents)));
       if (t.dueAt) out.push(ev("commitment_due_at", Math.floor(new Date(t.dueAt).getTime() / 1000)));
+      uint("commitment_late_minutes", t.commitmentLateMinutes);
       break;
     case "confirmation.received":
       if (personal && t.confirmationNumber) out.push(ev("confirmation_number", t.confirmationNumber.slice(0, 64)));
@@ -217,6 +375,9 @@ export function toKeewanoEvents(e: Pick<MemoryEvent, "type" | "occurredAt" | "ty
     case "approval.granted":
     case "approval.denied":
       if (t.amountCents != null) out.push(ev("approval_amount_cents", cents(t.amountCents)));
+      uint("approval_response_seconds", t.approvalResponseSeconds);
+      str("approval_channel", t.approvalChannel);
+      bool("approval_while_holding", t.approvalWhileHolding);
       break;
     case "email.received":
       if (personal && t.confirmationNumber) out.push(ev("confirmation_number", t.confirmationNumber.slice(0, 64)));
@@ -227,8 +388,54 @@ export function toKeewanoEvents(e: Pick<MemoryEvent, "type" | "occurredAt" | "ty
   return out;
 }
 
+type PortfolioStream = Exclude<EntityType, "user" | "org" | "call" | "relationship" | "task" | "pm">;
+
+// Where each property-management event goes (research.md section 5.3). "task" and "pm" come from the
+// event itself; the rest from its refs, so a stream is skipped when the event has no such entity.
+const PM_STREAMS: Record<string, ("task" | "pm" | PortfolioStream)[]> = {
+  "wo.opened": ["task", "unit", "property", "owner", "tenancy", "pm"],
+  "wo.deflected": ["task", "unit"],
+  "emergency.routed": ["task", "property", "pm"],
+  "quote.received": ["vendor", "task", "unit"],
+  "vendor.declined": ["vendor", "task"],
+  "vendor.booked": ["vendor", "task", "unit"],
+  "approval.requested": ["owner", "task", "pm"],
+  "approval.granted": ["owner", "task", "pm"],
+  "approval.denied": ["owner", "task", "pm"],
+  "entry_notice.sent": ["unit", "task"],
+  "access.outcome": ["task", "unit", "tenancy"],
+  "commitment.received": ["vendor", "task"],
+  "commitment.fulfilled": ["vendor", "task"],
+  "commitment.broken": ["vendor", "task"],
+  "vendor.outcome": ["vendor", "task", "unit"],
+  "wo.completed": ["task", "unit", "vendor", "owner", "pm"],
+  "callback.opened": ["vendor", "unit"],
+  "asset.registered": ["asset", "unit"],
+  "asset.repaired": ["asset", "unit", "owner"],
+  "asset.decision": ["asset", "owner"],
+};
+
+const PARTY_STREAM: Record<string, PortfolioStream> = { vendor: "vendor", owner: "owner", tenant: "tenancy", agency: "agency", prospect: "prospect" };
+
 /** Which Keewano entities an event is written to. Calls are bracketed inside these streams. */
-export function keewanoEntitiesFor(e: Pick<MemoryEvent, "userId" | "taskId" | "orgKey" | "type">): EntityRef[] {
+export function keewanoEntitiesFor(e: Pick<MemoryEvent, "userId" | "taskId" | "orgKey" | "type"> & { refs?: EntityRefs | null; typed?: TypedFacts | null }): EntityRef[] {
+  if (e.refs && Object.keys(e.refs).length) {
+    let kinds = PM_STREAMS[e.type];
+    if (e.type.startsWith("commitment.") && e.typed?.commitmentKind === "payment") kinds = ["tenancy", "task"]; // a promise to pay
+    if (e.type.startsWith("call.")) {
+      const party = e.typed?.callParty ? PARTY_STREAM[e.typed.callParty] : undefined;
+      kinds = party ? ["task", party, "pm"] : ["task", "pm"];
+    }
+    kinds ??= ["task", "pm"];
+    const out: EntityRef[] = [];
+    for (const k of kinds) {
+      if (k === "task") {
+        if (e.taskId) out.push({ type: "task", id: e.taskId });
+      } else if (k === "pm") out.push({ type: "pm", id: e.userId });
+      else if (e.refs[k]) out.push({ type: k, id: e.refs[k]! });
+    }
+    return out;
+  }
   const refs: EntityRef[] = [];
   if (e.orgKey) {
     refs.push({ type: "relationship", id: `${e.userId}:${e.orgKey}` });
@@ -334,7 +541,9 @@ export class KeewanoMemory implements MemoryProvider {
     const uuid = entityUuid(entity);
     if (!/^[0-9a-f-]{36}$/.test(uuid)) throw new Error("bad entity id");
     const since = query.since ? ` AND event_datetime >= '${new Date(query.since).toISOString()}'` : "";
-    const statements = COLUMNS.map(
+    // Consumer streams only ever hold the original columns; portfolio streams can hold any.
+    const columns = entity.type === "user" || entity.type === "org" || entity.type === "relationship" ? COLUMNS.filter((c) => LEGACY_COLUMNS.has(c)) : COLUMNS;
+    const statements = columns.map(
       (col) => `SELECT event_datetime AS t, ${col} AS v FROM events WHERE user_id = '${uuid}'${since} ORDER BY t`,
     );
     const errors: string[] = [];
@@ -353,7 +562,7 @@ export class KeewanoMemory implements MemoryProvider {
     // the context values that share its second.
     const bySecond = new Map<number, Map<string, unknown>>();
     results.forEach((rows, i) => {
-      const col = COLUMNS[i];
+      const col = columns[i];
       for (const row of rows) {
         if (row.v === null || row.v === undefined) continue;
         const sec = Math.floor(new Date(row.t as string | Date).getTime() / 1000);
@@ -364,7 +573,7 @@ export class KeewanoMemory implements MemoryProvider {
       }
     });
     const rebuilt: MemoryEvent[] = [];
-    const userId = entity.type === "relationship" ? entity.id.split(":")[0] : entity.type === "user" ? entity.id : "";
+    const userId = entity.type === "relationship" ? entity.id.split(":")[0] : entity.type === "user" || entity.type === "pm" ? entity.id : "";
     const orgKey = entity.type === "relationship" ? entity.id.split(":")[1] : entity.type === "org" ? entity.id : null;
     for (const [sec, cols] of [...bySecond.entries()].sort((a, b) => a[0] - b[0])) {
       for (const [type, anchor] of Object.entries(ANCHORS)) {
@@ -406,7 +615,7 @@ export class KeewanoMemory implements MemoryProvider {
       trace: [
         {
           via: "keewano-sql",
-          request: `SELECT event_datetime, <column> FROM events WHERE user_id = '${uuid}'${since}  (x${COLUMNS.length} columns)`,
+          request: `SELECT event_datetime, <column> FROM events WHERE user_id = '${uuid}'${since}  (x${columns.length} columns)`,
           ms: Date.now() - started,
           rows: results.reduce((n, r) => n + r.length, 0),
         },
@@ -425,7 +634,8 @@ export class KeewanoMemory implements MemoryProvider {
       where.push(eq(eventsTable.userId, userId), eq(eventsTable.orgKey, orgKey));
     } else if (entity.type === "org") where.push(eq(eventsTable.orgKey, entity.id));
     else if (entity.type === "task") where.push(eq(eventsTable.taskId, entity.id));
-    else if (entity.type === "user") where.push(eq(eventsTable.userId, entity.id));
+    else if (entity.type === "user" || entity.type === "pm") where.push(eq(eventsTable.userId, entity.id));
+    else if (entity.type !== "call") where.push(sql`json_extract(${eventsTable.refs}, ${`$.${entity.type}`}) = ${entity.id}`);
     const rows = await db.select().from(eventsTable).where(and(...where));
     return rows.filter((r) => ANCHORS[r.type]).map(rowToMemoryEvent);
   }
@@ -475,6 +685,59 @@ function typedFromColumns(type: string, cols: Map<string, unknown>): TypedFacts 
     t.emailKind = String(v);
     t.amountCents = num("email_amount_cents");
     t.confirmationNumber = str("confirmation_number");
+  } else if (type === "wo.opened" || type === "quote.received" || type === "vendor.booked" || type === "callback.opened") {
+    t.trade = String(v) as TypedFacts["trade"];
+    if (type === "wo.opened") {
+      t.severity = str("severity") as TypedFacts["severity"];
+      t.intakeChannel = str("intake_channel") as TypedFacts["intakeChannel"];
+      t.photoCount = num("photo_count");
+    } else if (type === "quote.received") {
+      t.jobCode = str("job_code");
+      t.quoteCents = num("quote_cents");
+      t.tripFeeCents = num("trip_fee_cents");
+      t.warrantyDays = num("warranty_days");
+      t.earliestSlotHours = num("earliest_slot_hours");
+    } else if (type === "vendor.booked") {
+      t.dispatchRank = num("dispatch_rank");
+      t.bookedCents = num("booked_cents");
+    } else t.daysSinceDone = num("days_since_done");
+  } else if (type === "wo.deflected") {
+    t.fixCode = String(v);
+    t.secsToResolve = num("secs_to_resolve");
+  } else if (type === "emergency.routed") {
+    t.emergencyKind = String(v);
+    t.emergencyRoute = str("emergency_route") as TypedFacts["emergencyRoute"];
+    t.secsToHuman = num("secs_to_human");
+  } else if (type === "vendor.declined") {
+    t.declineReason = String(v) as TypedFacts["declineReason"];
+  } else if (type === "entry_notice.sent") {
+    t.noticePurpose = String(v) as TypedFacts["noticePurpose"];
+    t.noticeHours = num("notice_hours");
+    t.noticeMethod = str("notice_method") as TypedFacts["noticeMethod"];
+  } else if (type === "access.outcome") {
+    t.accessOutcome = String(v) as TypedFacts["accessOutcome"];
+    t.reschedules = num("reschedules");
+  } else if (type === "vendor.outcome") {
+    t.vendorOutcome = String(v) as TypedFacts["vendorOutcome"];
+    t.lateMinutes = num("late_minutes");
+  } else if (type === "wo.completed") {
+    t.woOutcome = String(v) as TypedFacts["woOutcome"];
+    t.visits = num("visits");
+    t.daysToFix = num("days_to_fix");
+    t.invoiceOverQuotePct = num("invoice_over_quote_pct");
+    if (cols.has("tenant_confirmed")) t.tenantConfirmed = Boolean(cols.get("tenant_confirmed"));
+    t.managerTouches = num("manager_touches");
+  } else if (type === "asset.registered" || type === "asset.repaired") {
+    t.assetType = String(v) as TypedFacts["assetType"];
+    if (type === "asset.registered") t.installYear = num("install_year");
+    else {
+      t.repairCents = num("repair_cents");
+      if (cols.has("repeat_within_90d")) t.repeatWithin90d = Boolean(cols.get("repeat_within_90d"));
+    }
+  } else if (type === "asset.decision") {
+    t.decision = String(v) as TypedFacts["decision"];
+    t.replaceCents = num("replace_cents");
+    t.assetAgeYears = num("asset_age_years");
   }
   return Object.fromEntries(Object.entries(t).filter(([, x]) => x !== undefined && !Number.isNaN(x))) as TypedFacts;
 }
@@ -518,6 +781,34 @@ export function summarizeTyped(type: string, t: TypedFacts): string {
       return `Update sent (${t.channel})`;
     case "email.received":
       return `Email: ${words(t.emailKind)}${usd(t.amountCents)}${conf}`;
+    case "wo.opened":
+      return `Work order opened: ${words(t.trade)}${t.severity ? ` (${t.severity})` : ""}${t.photoCount ? `, ${t.photoCount} photo${t.photoCount === 1 ? "" : "s"}` : ""}`;
+    case "wo.deflected":
+      return `Fixed without a vendor: ${words(t.fixCode)}`;
+    case "emergency.routed":
+      return `Emergency: ${words(t.emergencyKind)}${t.emergencyRoute ? `, routed to ${words(t.emergencyRoute)}` : ""}`;
+    case "quote.received":
+      return `Quote: ${words(t.jobCode ?? t.trade)}${usd(t.quoteCents)}${t.earliestSlotHours != null ? `, earliest in ${t.earliestSlotHours} h` : ""}`;
+    case "vendor.declined":
+      return `Vendor declined: ${words(t.declineReason)}`;
+    case "vendor.booked":
+      return `Vendor booked: ${words(t.trade)}${usd(t.bookedCents)}${t.dispatchRank ? ` (rank ${t.dispatchRank})` : ""}`;
+    case "entry_notice.sent":
+      return `Entry notice sent: ${words(t.noticePurpose)}${t.noticeHours != null ? `, ${t.noticeHours} h ahead` : ""}`;
+    case "access.outcome":
+      return `Access: ${words(t.accessOutcome)}`;
+    case "vendor.outcome":
+      return `Vendor ${t.vendorOutcome === "no_show" ? "no-show" : words(t.vendorOutcome)}${t.lateMinutes ? `, ${t.lateMinutes} min late` : ""}`;
+    case "wo.completed":
+      return `Work order closed: ${words(t.woOutcome)}${t.daysToFix != null ? ` in ${t.daysToFix} days` : ""}${t.managerTouches != null ? `, ${t.managerTouches} manager touches` : ""}`;
+    case "callback.opened":
+      return `Callback: ${words(t.trade)} failed again${t.daysSinceDone != null ? ` after ${t.daysSinceDone} days` : ""}`;
+    case "asset.registered":
+      return `Asset on file: ${words(t.assetType)}${t.installYear ? `, installed ${t.installYear}` : ""}`;
+    case "asset.repaired":
+      return `Repaired: ${words(t.assetType)}${usd(t.repairCents)}${t.repeatWithin90d ? " (repeat within 90 days)" : ""}`;
+    case "asset.decision":
+      return `Repair or replace: ${words(t.decision)}${usd(t.replaceCents)}`;
     default:
       return type;
   }

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { events, type EventRow } from "../db/schema";
 import type { EntityRef, MemoryEvent, MemoryProvider, MemoryTrace, TimelineQuery } from "./provider";
@@ -15,6 +15,7 @@ export function rowToMemoryEvent(row: EventRow): MemoryEvent {
     callId: row.callId,
     orgKey: row.orgKey,
     typed: row.typed,
+    refs: row.refs,
     source: "local",
   };
 }
@@ -48,6 +49,12 @@ export class LocalMemory implements MemoryProvider {
         where.push(eq(events.userId, userId), eq(events.orgKey, orgKey));
         break;
       }
+      case "pm":
+        where.push(eq(events.userId, entity.id));
+        break;
+      default:
+        // Portfolio streams: owner, property, unit, asset, vendor, tenancy, prospect, agency.
+        where.push(sql`json_extract(${events.refs}, ${`$.${entity.type}`}) = ${entity.id}`);
     }
     if (query.types?.length) where.push(inArray(events.type, query.types));
     if (query.before) where.push(lt(events.occurredAt, new Date(query.before)));

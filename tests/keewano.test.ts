@@ -53,3 +53,37 @@ describe("Keewano event mapping", () => {
     expect(summarizeTyped("commitment.received", commitment.typed)).toBe("Promise made: account credit $20.00 (confirmation A1832)");
   });
 });
+
+describe("Keewano catalog for property management", () => {
+  it("is append-only: the original entries keep their ids and the P0 entries follow from 2026", () => {
+    const legacy = ["entity_kind", "task_created", "task_completed", "memory_brief_used", "call_started", "hold_seconds", "call_duration_seconds", "call_ended", "offer_amount_cents", "offer_received", "offer_accepted", "offer_declined", "confirmation_number", "commitment_amount_cents", "commitment_due_at", "commitment_received", "commitment_fulfilled", "commitment_broken", "confirmation_received", "approval_amount_cents", "approval_requested", "approval_granted", "approval_denied", "message_sent", "email_received", "email_amount_cents"];
+    expect(CATALOG.slice(0, legacy.length).map((c) => c.name)).toEqual(legacy);
+    CATALOG.forEach((c, i) => expect(c.eventTypeId).toBe(2000 + i));
+    expect(id("wo_opened")).toBe(2026);
+    expect(id("call_party")).toBe(2072);
+  });
+
+  it("maps a work order with its context first and the trade as the anchor", () => {
+    const events = toKeewanoEvents({ type: "wo.opened", occurredAt: "2026-10-11T02:00:00.000Z", typed: { trade: "hvac", severity: "urgent", intakeChannel: "mms", photoCount: 2 } }, "unit");
+    expect(events.map((e) => e.eventTypeId)).toEqual([id("entity_kind"), id("severity"), id("intake_channel"), id("photo_count"), id("wo_opened")]);
+    expect(events[0].data).toBe("unit");
+    expect(events.at(-1)?.data).toBe("hvac");
+  });
+
+  it("fans portfolio events out to the streams in the research doc", () => {
+    const refs = { unit: "unit_alder_b", property: "prop_alder", owner: "own_shah", tenancy: "ten_alder_b", vendor: "ven_rapidair", asset: "ast_alder_b_ac" };
+    const kinds = (type: string, typed = {}) => keewanoEntitiesFor({ userId: "usr_1", taskId: "tsk_1", orgKey: null, type, refs, typed }).map((r) => r.type);
+    expect(kinds("wo.opened")).toEqual(["task", "unit", "property", "owner", "tenancy", "pm"]);
+    expect(kinds("quote.received")).toEqual(["vendor", "task", "unit"]);
+    expect(kinds("approval.granted")).toEqual(["owner", "task", "pm"]);
+    expect(kinds("asset.repaired")).toEqual(["asset", "unit", "owner"]);
+    expect(kinds("commitment.broken", { commitmentKind: "arrival" })).toEqual(["vendor", "task"]);
+    expect(kinds("commitment.broken", { commitmentKind: "payment" })).toEqual(["tenancy", "task"]);
+    expect(kinds("call.completed", { callParty: "owner" })).toEqual(["task", "owner", "pm"]);
+  });
+
+  it("reads portfolio events back as sentences", () => {
+    expect(summarizeTyped("vendor.outcome", { vendorOutcome: "no_show" })).toBe("Vendor no-show");
+    expect(summarizeTyped("quote.received", { trade: "hvac", jobCode: "ac_no_cool", quoteCents: 65_000, earliestSlotHours: 3 })).toBe("Quote: ac no cool $650.00, earliest in 3 h");
+  });
+});

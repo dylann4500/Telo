@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, lt, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { events } from "../db/schema";
-import type { TypedFacts } from "../domain/types";
+import type { EntityRefs, TypedFacts } from "../domain/types";
 import { newId } from "../ids";
 import { maskSecrets } from "../redact";
 import { getMemory } from "./index";
@@ -45,7 +45,22 @@ export type TeloEventType =
   | "calendar.event_created"
   // During a call (local only): Telo asked the user while the business waited, or checked their calendar.
   | "call.asked_user"
-  | "calendar.checked";
+  | "calendar.checked"
+  // Property management (docs/property-management/research.md section 5.3).
+  | "wo.opened"
+  | "wo.deflected"
+  | "emergency.routed"
+  | "quote.received"
+  | "vendor.declined"
+  | "vendor.booked"
+  | "entry_notice.sent"
+  | "access.outcome"
+  | "vendor.outcome"
+  | "wo.completed"
+  | "callback.opened"
+  | "asset.registered"
+  | "asset.repaired"
+  | "asset.decision";
 
 export interface RecordEventInput {
   id?: string; // pass a deterministic id when the same event may be recorded twice
@@ -57,6 +72,7 @@ export interface RecordEventInput {
   summary: string;
   data?: Record<string, unknown>;
   typed?: TypedFacts | null;
+  refs?: EntityRefs | null;
   occurredAt?: Date;
 }
 
@@ -74,6 +90,7 @@ export async function recordEvent(input: RecordEventInput): Promise<string> {
       summary: maskSecrets(input.summary),
       data: input.data ?? {},
       typed: input.typed ?? null,
+      refs: input.refs ?? null,
       occurredAt: input.occurredAt ?? new Date(),
     })
     .onConflictDoNothing();

@@ -6,13 +6,16 @@ import type {
   CallBrief,
   CallStatus,
   Channel,
+  EntityRefs,
   Fact,
   FollowUp,
   InfoField,
   MemoryBrief,
+  MessageParty,
   Plan,
   QuestionKind,
   TaskCategory,
+  TaskContext,
   TaskResult,
   TaskStatus,
   TaskTarget,
@@ -81,6 +84,8 @@ export const tasks = sqliteTable(
     version: integer("version").notNull().default(0),
     stepFailures: integer("step_failures").notNull().default(0),
     wakeAt: integer("wake_at", { mode: "timestamp_ms" }), // for status "scheduled"
+    // Property management: the unit, tenancy, owner and vendors a task is about.
+    context: text("context", { mode: "json" }).$type<TaskContext | null>(),
 
     lastError: text("last_error"),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
@@ -195,6 +200,8 @@ export const messages = sqliteTable(
     providerMessageId: text("provider_message_id"),
     status: text("status").$type<"received" | "queued" | "sent" | "delivered" | "failed">().notNull(),
     error: text("error"),
+    // Set when the other side is a tenant, owner or vendor rather than the property manager.
+    party: text("party", { mode: "json" }).$type<MessageParty | null>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -220,6 +227,8 @@ export const events = sqliteTable(
     data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull().$defaultFn(() => ({})),
     // The typed slice that is mirrored to Keewano. null = local-only event.
     typed: text("typed", { mode: "json" }).$type<TypedFacts | null>(),
+    // Portfolio entities (unit, vendor, owner...) that pick the event's Keewano streams.
+    refs: text("refs", { mode: "json" }).$type<EntityRefs | null>(),
     occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
     memorySyncedAt: integer("memory_synced_at", { mode: "timestamp_ms" }),
     memorySyncError: text("memory_sync_error"),
