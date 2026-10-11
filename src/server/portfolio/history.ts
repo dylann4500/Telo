@@ -1,6 +1,7 @@
 import { config } from "../config";
 import { db } from "../db/client";
-import { events } from "../db/schema";
+import { eq } from "drizzle-orm";
+import { appState, events } from "../db/schema";
 import type { EntityRefs, Severity, Trade, TypedFacts } from "../domain/types";
 import type { TeloEventType } from "../memory/events";
 import { ASSETS } from "./data";
@@ -229,12 +230,19 @@ export function portfolioHistoryRows(now = new Date()): Row[] {
 }
 
 /** Loads the portfolio's history into the events table (the outbox mirrors it to Keewano). Idempotent. */
-export async function seedPortfolioHistory(): Promise<{ created: number; total: number }> {
-  const rows = portfolioHistoryRows();
+export async function seedPortfolioHistory(): Promise<{ created: number; total: number; sent: boolean }> {
+  // Keewano keeps everything and can't delete, and a reload can store the history again: it goes to
+  // Keewano once. Loads after that (a board reset) are local only, marked as already synced.
+  const sentBefore = Boolean(await db.query.appState.findFirst({ where: eq(appState.key, SENT_KEY) }));
+  const syncedAt = sentBefore ? new Date() : null;
+  const rows = portfolioHistoryRows().map((r) => (syncedAt ? { ...r, memorySyncedAt: syncedAt } : r));
   let created = 0;
   for (let i = 0; i < rows.length; i += 50) {
     const res = await db.insert(events).values(rows.slice(i, i + 50)).onConflictDoNothing().returning({ id: events.id });
     created += res.length;
   }
-  return { created, total: rows.length };
+  if (!sentBefore && config.memory.provider === "keewano") await db.insert(appState).values({ key: SENT_KEY, value: new Date().toISOString() }).onConflictDoNothing();
+  return { created, total: rows.length, sent: !sentBefore };
 }
+
+const SENT_KEY = "portfolio.history_sent";

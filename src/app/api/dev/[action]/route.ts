@@ -60,6 +60,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/dev/[action]">)
     case "reset": {
       await resetAll();
       await seedBaseline();
+      // The portfolio's history comes back locally (the dashboard's "before" numbers); Keewano already has it.
+      await seedPortfolioHistory();
       return Response.json({ ok: true, note: config.memory.provider === "keewano" ? "Local data cleared. Keewano has no delete API, so its history stays." : "Local data cleared." });
     }
     case "simulate-call": {
