@@ -9,6 +9,26 @@
         "dev"
       ],
       "port": 3210
+    },
+    {
+      "name": "telo-sim",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "DATABASE_URL=file:./data/sim-preview.db",
+        "LLM_PROVIDER=mock",
+        "VOICE_PROVIDER=mock",
+        "MEMORY_PROVIDER=local",
+        "MAIL_PROVIDER=mock",
+        "CALENDAR_PROVIDER=mock",
+        "TELO_LIVE_WAIT_SECONDS=240",
+        "TELO_LIVE_POLL_SECONDS=5",
+        "MOCK_CALL_SPEED=1",
+        "TELO_DIRECTORY=[{\"name\":\"Westbay Telecom\",\"aliases\":[\"westbay\"]}]",
+        "npm",
+        "run",
+        "dev"
+      ],
+      "port": 3210
     }
   ]
 }
