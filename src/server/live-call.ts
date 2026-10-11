@@ -262,9 +262,11 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
   const choices: ApprovalOption[] = decision ? options.map((label, i) => ({ id: `${slug(label)}_${i + 1}`, label })) : [];
   const id = newId("q");
   // A work order's spending decision is the owner's: asked by text while the vendor holds.
-  const owner = decision && isMaintenance(task) ? getOwner(task.context.owner) : undefined;
+  // Anything else (a time outside the tenant's windows, a detail) is the manager's.
   const dollars = question.match(/\$\s?([\d,]+(?:\.\d{2})?)/)?.[1];
   const amountCents = dollars ? Math.round(Number(dollars.replace(/,/g, "")) * 100) : undefined;
+  const spending = amountCents != null || /\b(approv\w*|replac\w*|spend\w*|over (the|their) limit)\b/i.test(`${detail} ${question}`);
+  const owner = decision && spending && isMaintenance(task) ? getOwner(task.context.owner) : undefined;
   // Replaces this call's earlier question and any question from between calls; a parallel call's live question stays.
   for (const old of (await listQuestions(task.id)).filter((x) => x.status === "open")) {
     const c = old.context as { live?: boolean; callId?: string };

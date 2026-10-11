@@ -330,9 +330,14 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
 
   const owner = home.owner;
   const emergency = r.severity === "emergency";
+  const urgent = emergency || r.severity === "urgent";
   const limit = emergency ? Math.min(owner.emergencyLimitCents, FIRM.emergencyCapCents) : owner.approvalLimitCents;
   const authority: Authority = {
-    allowed: [`Book a visit that costs ${usd(limit)} or less in total`, "Share the unit address, the problem and the tenant's preferred times", "Book inside the tenant's preferred times, or tonight for urgent work"],
+    allowed: [
+      urgent ? `Book a visit tonight (or within a few hours) if the total is ${usd(limit)} or less` : `Book a visit inside the tenant's preferred times if the total is ${usd(limit)} or less`,
+      "Share the unit address, the problem and the tenant's preferred times",
+      `Any other time: don't book it and don't ask anyone. Note the time and the price, say Telo will call back to confirm, and end the call`,
+    ],
     askFirst: [
       `Any total over ${usd(limit)}: say "one moment" and use ask_customer with the price as a decision (options like "Approve $650" and "Don't approve"); Telo asks the owner by text while they hold`,
       ...(replace ? ["Replacing the unit instead of repairing it (get the price, don't agree)"] : []),
@@ -352,7 +357,10 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
       category: "quotes",
       targets: picks.map((s) => ({ name: s.vendor.name, phone: s.vendor.phone, kind: "business" as const })),
       facts,
-      constraints: [`Open by saying you're an AI assistant calling for ${config.user.name} at ${FIRM.name}, and that the call is recorded`],
+      constraints: [
+        `Open by saying you're an AI assistant calling for ${config.user.name} at ${FIRM.name}, and that the call is recorded`,
+        `Only use ask_customer to get the owner's OK on a total over ${usd(limit)}. Never hold the line for anything else: if they ask for something you don't have (a model number, whether the outdoor unit runs, a gate code), say their tech can check on site or the tenant can show them, and carry on`,
+      ],
       authority,
       memory,
       context: { ...ctx, trade: r.trade, severity: r.severity, jobCode: r.jobCode, problem: r.problem, issue: r.title, asset: asset?.id, ranked: ranking.value.map((s) => s.vendor.id), replaceQuote: replace, stage: "dispatching" },
@@ -549,11 +557,18 @@ export async function afterCalls(task: TaskRow & { context: TaskContext }): Prom
 
 const firstWord = (name: string) => name.toLowerCase().split(/\s+/)[0];
 
-/** The total a vendor quoted on a call, in cents. */
+/** The total a vendor quoted on a call, in cents: the analysis's quote, an offer or commitment, or the first price the vendor said. */
 function priceOf(c: CallRow): number | null {
   const a = c.analysis;
-  const usdPrice = a?.quote?.priceUsd ?? a?.offers.find((o) => o.priceUsd != null)?.priceUsd ?? null;
-  return usdPrice == null ? null : Math.round(usdPrice * 100);
+  const usdPrice =
+    a?.quote?.priceUsd ??
+    a?.offers.find((o) => o.priceUsd != null)?.priceUsd ??
+    a?.commitments.find((x) => x.amountUsd != null)?.amountUsd ??
+    null;
+  if (usdPrice != null) return Math.round(usdPrice * 100);
+  const said = c.transcript.filter((t) => t.speaker === "other").map((t) => t.text).join(" ");
+  const first = said.match(/\$\s?([\d,]+(?:\.\d{2})?)/)?.[1];
+  return first ? Math.round(Number(first.replace(/,/g, "")) * 100) : null;
 }
 
 async function book(task: TaskRow & { context: TaskContext }, call: CallRow, ownerApproved: boolean, tz: string): Promise<boolean> {
@@ -576,7 +591,18 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
   for (const other of (await listCalls(task.id)).filter((c) => c.kind === "business" && c.id !== call.id && c.analysis && !["no_answer", "voicemail", "failed"].includes(c.analysis.outcome))) {
     const v = vendorForCall(other);
     const party = vendorParty(v?.id);
-    if (party && v?.id !== vendor.id) await notifyParty({ party, taskId: task.id, kind: "decline", body: `Hi, it's Telo for ${FIRM.name}. Thanks for the quote on ${unit.label}. We've booked another company this time.`, dedupeKey: `decline:${task.id}:${v!.id}` });
+    // Parallel calls can both book: the one Telo doesn't keep is asked to cancel.
+    const theyBooked = Boolean(other.analysis?.booking);
+    if (party && v?.id !== vendor.id)
+      await notifyParty({
+        party,
+        taskId: task.id,
+        kind: "decline",
+        body: theyBooked
+          ? `Hi, it's Telo for ${FIRM.name}. Please cancel the visit you booked for ${unit.label}; we've booked another company. Thanks for being quick.`
+          : `Hi, it's Telo for ${FIRM.name}. Thanks for the quote on ${unit.label}. We've booked another company this time.`,
+        dedupeKey: `decline:${task.id}:${v!.id}`,
+      });
   }
 
   // The tenant: the window and the entry notice. The text and its timestamp are the legal record.
