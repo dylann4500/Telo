@@ -46,12 +46,13 @@ export function DevTools({ onChange, simulatedLine, mail }: { onChange: () => vo
             disabled={!!busy}
             onClick={() =>
               run("call", "/api/dev/simulate-call", {
-                lines: ["Hey, how's the AC at Alder Street going?"],
+                from: "ten_alder_b",
+                lines: ["Hi, this is Maria in Unit B on Alder Street. The AC is out again, it's blowing warm air and it's 85 degrees in here."],
               })
             }
             className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 hover:border-brand disabled:opacity-50"
           >
-            <PhoneIncoming className="size-3.5" /> Simulate calling Telo
+            <PhoneIncoming className="size-3.5" /> Maria calls: AC is out
           </button>
         )}
         {mail !== "off" && (

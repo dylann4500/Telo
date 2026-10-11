@@ -157,3 +157,18 @@ describe("an owner texts with nothing waiting on them", () => {
     expect(fwd.body).toMatch(/Alder St duplex/);
   });
 });
+
+describe("a tenant calls Telo's number", () => {
+  it("opens a work order from what they said, and texts them back", async () => {
+    const { getVoice } = await import("../src/server/voice");
+    const { MockVoice } = await import("../src/server/voice/mock");
+    const voice = getVoice();
+    expect(voice).toBeInstanceOf(MockVoice);
+    await (voice as InstanceType<typeof MockVoice>).simulateInboundCall("+14155550127", ["Hi, it's Grace at Linden Court. The dishwasher isn't draining, there's standing water in it."]);
+    const task = await workOrder("ten_linden_house");
+    expect(task.source).toBe("voice");
+    const opened = await waitFor(async () => (await eventsOf(task.id)).find((e) => e.type === "wo.opened"), "the work order to open");
+    expect(opened.typed).toMatchObject({ trade: "appliance", intakeChannel: "call" });
+    await waitFor(async () => (await messagesOf(task.id)).find((x) => x.party?.id === "ten_linden_house" && x.direction === "out"), "a text back to Grace");
+  }, 30_000);
+});

@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, isNotNull, isNull } from "drizzle-orm";
 import { config } from "../config";
+import { partyByPhone } from "../portfolio";
 import { db } from "../db/client";
 import { calls, messages, type CallRow } from "../db/schema";
 import { TERMINAL_STATUSES, type CallStatus } from "../domain/types";
@@ -86,6 +87,11 @@ async function taskCalledFrom(from: string | null) {
   return null;
 }
 
+/** A tenant, owner or vendor's name for an inbound number, from the portfolio. */
+function partyName(phone: string | null): string | null {
+  return partyByPhone(phone)?.name ?? null;
+}
+
 /** The call row for a provider call id. Inbound calls are created on first sight. */
 async function resolveCall(e: Extract<VoiceEvent, { kind: "call.status" | "call.ended" }>): Promise<CallRow | undefined> {
   const existing = await getCallByProviderId(e.providerCallId);
@@ -103,7 +109,7 @@ async function resolveCall(e: Extract<VoiceEvent, { kind: "call.status" | "call.
         kind: user ? "user_inbound" : "business",
         seq: callback?.seq ?? 0,
         orgKey: callback?.orgKey ?? null,
-        targetName: user ? user.name : callback?.targetName ?? e.from ?? "Unknown caller",
+        targetName: user ? user.name : callback?.targetName ?? partyName(e.from) ?? e.from ?? "Unknown caller",
         targetPhone: e.from,
         purpose: user ? `${user.name} called Telo` : callback ? `${callback.targetName} called back` : "Inbound call",
         status: "in_progress",
@@ -240,6 +246,14 @@ export async function finishCall(callId: string): Promise<void> {
   let call = claimed[0];
   if (!call) return;
   if (call.kind === "business" && call.direction === "inbound") {
+    // A tenant calling about a problem at home: a work order, from what they said.
+    const { partyByPhone } = await import("../portfolio");
+    const party = partyByPhone(call.targetPhone);
+    if (party?.role === "tenant") {
+      const { handleTenantCall } = await import("../maintenance");
+      await handleTenantCall(party, call);
+      return;
+    }
     // A business returning Telo's call: wake the task that was waiting on it,
     // or at least tell the user what they said.
     if (!call.taskId) call = (await linkByMention(call)) ?? call;

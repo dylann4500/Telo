@@ -165,6 +165,20 @@ async function tenantText(party: Party, body: string, channel: string, providerM
   return true;
 }
 
+/** A tenant called Telo's number: what they said becomes a work order (or a note on the open one). */
+export async function handleTenantCall(party: Party, call: CallRow): Promise<void> {
+  const said = call.transcript.filter((t) => t.speaker === "other").map((t) => t.text).join(" ").trim();
+  if (!said) return;
+  const open = await openWorkOrder(party.id);
+  const stored = await storeInbound(party, said, "voice", null, open?.id ?? null);
+  if (!stored) return;
+  if (open) {
+    await tenantFollowUp(party, open, said, []);
+    return;
+  }
+  await startWorkOrder(party, said, "voice", [], stored);
+}
+
 /** A new report: create the work order and let the orchestrator triage it. */
 export async function startWorkOrder(party: Party, report: string, source: "sms" | "voice", media: string[], messageId?: string | null): Promise<string | null> {
   const home = homeOf(party.id);

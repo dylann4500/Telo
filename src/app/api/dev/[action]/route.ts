@@ -31,7 +31,7 @@ const EMAILS = {
 
 // Demo and development helpers. Disabled with TELO_DEV_TOOLS=false.
 
-const SimCall = z.object({ lines: z.array(z.string().min(1)).min(1).max(12) });
+const SimCall = z.object({ lines: z.array(z.string().min(1)).min(1).max(12), from: z.string().optional() });
 // A text from someone in the portfolio (tenant, owner, vendor), by party id: the demo's other phones.
 const SimText = z.object({ from: z.string().min(3), text: z.string().max(1000).default(""), photos: z.number().int().min(0).max(4).default(0) });
 
@@ -56,8 +56,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/dev/[action]">)
       if (!(voice instanceof MockVoice)) return Response.json({ error: "Only with the simulated phone line" }, { status: 400 });
       const parsed = SimCall.safeParse(await req.json().catch(() => ({})));
       if (!parsed.success) return Response.json({ error: "lines[] required" }, { status: 400 });
-      const from = config.user.phone ?? "+15555550100";
-      const greeting = `Hey ${config.user.name.split(" ")[0]}, it's Telo. What can I do?`;
+      // From the manager by default, or from a tenant in the portfolio (a repair report by phone).
+      const tenant = parsed.data.from ? getTenancy(parsed.data.from) : undefined;
+      const from = tenant?.phone ?? config.user.phone ?? "+15555550100";
+      const greeting = tenant ? "This is Telo, the AI assistant for Bayside Property Management. This call is recorded. What's going on?" : `Hey ${config.user.name.split(" ")[0]}, it's Telo. What can I do?`;
       const id = await voice.simulateInboundCall(from, parsed.data.lines, [greeting]);
       return Response.json({ ok: true, providerCallId: id });
     }
