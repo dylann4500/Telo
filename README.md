@@ -1,24 +1,22 @@
 # Telo
 
-**Delegate anything that needs a phone call.**
+**The AI that works the phones for small rental property managers.**
 
-Text Telo, or call it: *"Cancel my gym membership."* *"My bill is wrong again, can you call them?"* *"Find a windshield shop that can do tomorrow under $400."* Telo asks only for what the call needs, makes the call with an AI voice agent, handles it on its own, and texts you when it's done. It interrupts you only for decisions that are yours to make, like a retention offer you never said how to handle. And every time it deals with a business, it remembers what happened, so the next call starts with *"On October 2 your rep promised a $20 credit under confirmation A1832..."*
+A property manager gives Telo one phone number. Tenants call or text it (photos welcome): *"The AC is out again, it's 85 in here."* Telo triages the report, calls two vendors at once to compare availability, price and terms, and gets the owner's OK by text while a vendor holds when the price is over the owner's limit. Then it books the tenant's window with the entry notice the law requires, checks "on the way?" and "fixed?" during the visit, and closes the job. Every unit and vendor's history lives in Keewano, and that memory changes what Telo does: who gets called first, and when to ask for a replacement price instead of another repair.
 
-Telo isn't a general assistant. It learns what it needs just in time, for one task, and keeps a history of what businesses said and promised. Connected to Gmail and Google Calendar, it also picks up business mail and books inside your free time.
+Built for small firms and owner-operators running about 20 to 500 long-term rentals without a maintenance coordinator. The seeded portfolio (one firm, two owners, three properties, eight units, eight vendors) stands in for property-management software, so the demo runs without any.
 
-Built for SpeedHacks (SF Tech Week) on **[Dial](https://getdial.ai)** (phone numbers, AI calls, texts), **[Keewano](https://keewano.com)** (event memory) and **Claude** (reasoning).
+Built for SpeedHacks (SF Tech Week) on **[Dial](https://getdial.ai)** (phone numbers, AI calls, texts), **[Keewano](https://keewano.com)** (event memory) and **Claude** (reasoning). The brief and research are in [docs/property-management/](docs/property-management/).
 
 ---
 
-## How you use it
+## How it works for each party
 
-- **Text Telo's number** (SMS or iMessage) from your phone. That's the main interface.
-- **Call Telo's number.** Dial's voice agent answers as Telo and uses Telo's tools mid-call: it can start a task, answer a question Telo asked you, take your decision, or tell you the status.
-- **Help while the business waits.** If the business needs something only you have ("what's the account number?") or a decision only you can make ("$18/month instead of cancelling?"), Telo's agent says "Let me check with Dylan, one moment," texts (and calls) you, keeps them company while you answer, and finishes on the same call. It checks your calendar before accepting a time. If you don't answer in time, it says it'll call back, and asks you the usual way.
-- **Telo texts you back** at the moments that matter: *"Calling Equinox now."* *"They offered $18/month instead of cancelling. Accept, or keep cancelling?"* *"Done. Membership ends Nov 8, confirmation 18392."*
-- **Text me, or text and call me.** A toggle in the dashboard's thread header (or just text Telo "just text me" / "call me with updates"). With calls on, Telo also phones you when it needs an answer, when a call has news, and when a task is done; at night only if you've been talking to it, or if a business is waiting on the line.
-- **Ask anytime:** *"any update?"*, *"what did Comcast promise last time?"* Telo answers from live task state and its memory.
-- **The dashboard** (http://localhost:3210) mirrors the thread as it looks on your phone, plus the work behind it: live calls (with a box to answer Telo while the business waits), transcripts, what Telo remembered and the query that fetched it, and for each task a step-by-step view of how Telo handled it.
+- **Tenants** call or text Telo's number. Telo asks what's wrong (and for photos), gives safety instructions first for gas, smoke, CO or flooding, and texts back the vendor's window with the entry notice. It asks "fixed? Reply Y or N" at the visit.
+- **Vendors** get called two at a time, ranked by their record across the portfolio (no-shows, late arrivals, first-visit fixes). Every call opens with "an AI assistant calling for the manager; this call is recorded". The one Telo doesn't book gets a polite no.
+- **Owners** get a text only when a price is over their approval limit, while the vendor holds: *"Approve $650 tonight? It's the third failure since June. Want a replacement quote too?"* Their reply goes back on the same call.
+- **The property manager** supervises by text and call: one text per new work order and one per booking, never a question Telo can answer itself. Ask anytime: *"which vendor no-shows most?"* or *"what does a water-heater replacement usually cost us?"* Telo answers from Keewano with live SQL.
+- **The dashboard** (http://localhost:3210) is the manager's board, built to stay calm with many jobs at once: the numbers at a glance (open work orders, on the phone now, waiting on someone, visits booked, manager touches per job before Telo and with it), every live call side by side with the owner's question inline, a board by stage (new and calling, waiting on someone, booked, follow-up), and a flowchart on each work order's page.
 
 ## Architecture
 
@@ -70,6 +68,17 @@ flowchart LR
 7. Claude decides the next step: complete, ask you (a decision, or a detail the business needs), call the next business, call back now, retry later, or **schedule** a call for when the business said ("call back in 3 days", "we open Monday at 9", "we'll call you back"). Scheduled calls wake on their own (inside 8 AM–9 PM), a business calling Telo's line back is matched to its task, and every task has a call cap. You get one concise text.
 8. Everything that happened is recorded as an event. Typed events (categories, cents, seconds; never names or transcripts) are mirrored to Keewano on four streams: you × business (the main memory), the business, the task, and you.
 
+**A maintenance work order** (`src/server/maintenance.ts`) runs on the same engine:
+
+1. A tenant's text (or the transcript of their call) from a number in the portfolio creates a task with its unit, tenancy, owner and photos.
+2. **Triage:** Claude reads the report into a trade, a severity and a job code. Gas, fire or CO: safety instructions to the tenant, a page to the manager, and no vendor call.
+3. **Memory decides** (`src/server/portfolio/insights.ts`): live Keewano SQL ranks the approved vendors for the trade, and the asset's repair history says whether to ask for a replacement price too. The task page shows both queries.
+4. The top two vendors are **called at once**. Over the owner's limit, the voice agent's `ask_customer` goes to the owner by text while the vendor holds.
+5. **Booked:** the tenant gets the window and the entry notice (asking for consent under 24 hours), the other vendor a polite no, and the owner and manager one update each.
+6. **Follow-up:** thirty minutes into the window, "on the way?" to the vendor and "fixed?" to the tenant. "Y" marks the vendor's promise kept and closes the work order with the count of manager touches.
+
+Each step is a typed event on the Keewano streams of the unit, the vendor, the owner, the property, the tenancy, the asset and the firm (research.md section 5.3).
+
 **Email and calendar (Google):** Telo reads your inbox, read-only. A receipt or confirmation from a business is saved to memory. One that answers what Telo was waiting on finishes the task without the call. One that needs a call ("your bill went up, call us") becomes a suggestion Telo makes only after you say yes. With your calendar connected, Telo books inside your free time instead of asking when works, and puts the booking on your calendar. Connect once with `npm run google:connect`.
 
 More detail: [docs/architecture.md](docs/architecture.md). The sponsor research behind every integration detail is in [docs/integrations/dial.md](docs/integrations/dial.md) and [docs/integrations/keewano.md](docs/integrations/keewano.md).
@@ -82,7 +91,7 @@ npm run setup     # creates .env.local, generates secrets, lists what's missing
 npm run dev       # http://localhost:3210
 ```
 
-With no keys, everything runs on simulations, wired through the same code paths: a rule-based stand-in for Claude, a simulated phone line that plays realistic calls (with live transcripts), and local memory. Open the dashboard, expand **Demo controls**, click **Load last week's Comcast call**, then text Telo in the thread.
+With no keys, everything runs on simulations, wired through the same code paths: a rule-based stand-in for Claude, a simulated phone line that plays the vendors (with live transcripts), and local memory. Open the dashboard, expand **Demo controls**, click **Load the portfolio's history**, then **Maria calls: AC is out** (or the text with photos), and answer as Priya when Rapid Air is waiting on the line.
 
 ```bash
 npm test          # state machine, webhook signatures, Keewano mapping, end-to-end flows
@@ -125,12 +134,14 @@ Put `ANTHROPIC_API_KEY` in `.env.local` and run `npm run llm:check`. `TELO_MODEL
    - `KEEWANO_PROJECT_ID`: Settings → Details.
    - `KEEWANO_PG_USER`: your Keewano login email.
 3. Run `npm run keewano:check` to register the event catalog, send a test event, and run a live SQL query.
-4. **Load the demo history at least 30 minutes before presenting.** Keewano documents about 5 minutes before new events are queryable; on a fresh project it took 15–20. Telo merges its own writes from the last hour in the meantime.
+4. **Load the portfolio's history at least 30 minutes before presenting:** `npm run seed:portfolio` (safe to run twice). Keewano documents about 5 minutes before new events are queryable; on a fresh project it took 15–20. Telo merges its own writes from the last hour in the meantime.
 
 What Keewano does in Telo:
-- **Before every call**, Telo runs live SQL over the you × business stream and gives the call agent a brief built from what comes back: promises, offers, confirmation numbers, whether earlier promises were kept.
-- **Questions nobody prepared for** ("how often has Comcast broken a promise?", "average call length?") go to Keewano. Claude writes one read-only SQL statement over Telo's event columns, Telo runs it, and Claude answers from the rows. The query is logged, so the dashboard can show it.
-- **What it stores:** only typed values (task kinds, outcomes, cents, durations, confirmation codes on your own streams). Keewano has no delete API, so names, transcripts and free text never leave Telo's database.
+- **Who gets called first.** Before each work order's calls, live SQL counts every vendor's visits, no-shows, late arrivals and first-visit fixes, and Telo calls the best two for the trade.
+- **Repair or replace.** The asset's repairs over the past year (two or more, or one on an old unit) make Telo ask for a replacement price too.
+- **Questions nobody prepared for** ("which vendor no-shows most?", "which unit cost the most this year?") go to Keewano. Claude writes one read-only SQL statement over Telo's event columns, Telo runs it and resolves ids to names locally, and Claude answers from the rows. The dashboard shows the SQL.
+- **Before and after:** manager touches and days to fix per work order, from the seeded history and from Telo's own jobs.
+- **What it stores:** only typed values (trades, outcomes, cents, minutes, counts). Keewano has no delete API, so names, phone numbers, addresses, transcripts and free text never leave Telo's database. Keewano rejects `count(...) FILTER (WHERE ...)`; Telo puts the condition in `WHERE` instead.
 
 ## Configuration
 
@@ -144,24 +155,22 @@ Every variable is documented in [.env.example](.env.example). The important ones
 | `ANTHROPIC_API_KEY`, `TELO_MODEL` | Claude |
 | `DIAL_API_KEY` (+ values written by `dial:setup`) | Dial |
 | `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID`, `KEEWANO_PG_USER` | Keewano |
-| `DEMO_TARGET_PHONE` | A teammate's phone that plays every business in a live demo |
+| `TELO_PORTFOLIO_PHONES` | JSON map of portfolio ids to real phones for a live demo, e.g. `{"ten_alder_b":"+1…","own_shah":"+1…","ven_rapidair":"+1…","ven_summit":"+1…"}`. The seeded 555-01xx numbers reach nobody, and Telo never texts them on a real line |
+| `DEMO_TARGET_PHONE` | A teammate's phone that plays any business without a number of its own |
 | `TELO_DIRECTORY` | JSON list of businesses and numbers, overriding the demo directory |
 | `DATABASE_URL` | `file:./data/telo.db` by default; a `libsql://` URL for Turso |
 | `TELO_DEV_TOOLS` | Demo controls in the dashboard (default on) |
 
 ## Demo script
 
-See [docs/demo.md](docs/demo.md). In short:
-1. **Memory:** text "My bill is wrong again. Can you call them and figure it out?" Telo works out it's Comcast from your history, queries Keewano, and calls. On the call, it cites last week's $20 credit under A1832. The rep admits it was never applied and applies it. Telo records the broken promise and texts you the new confirmation.
-2. **Judgment:** text "Cancel my gym membership at Equinox." Telo asks for the email, calls, and gets a retention offer. It doesn't decide for you; it texts "Accept $18/month or keep cancelling?" Reply "keep cancelling" and Telo calls back and finishes: membership ends Nov 8, confirmation 18392.
-3. **Several calls:** text "Call three windshield repair shops and find one that can do tomorrow under $400." Telo calls all three, compares them, and asks to book the $330 one.
-4. **Voice:** call Telo's number and ask "how's the gym thing going?"
-5. **Unprepared question:** text "how many times has a business broken a promise to me?" Telo answers with a live Keewano query.
+See [docs/demo.md](docs/demo.md). In short: Maria calls (or texts, with photos) that Unit B's AC is out. Keewano says it's the unit's third AC failure since June and that CoolBreeze no-showed twice, so Telo calls Summit Mechanical and Rapid Air at once. Rapid Air can come tonight for $650, over Priya's $500 limit; Telo texts Priya while Rapid Air holds, she approves and asks for a replacement quote. Maria gets the window and the entry notice, Summit a polite no. At the visit, "fixed? Y" closes the job with zero manager touches. Then a judge asks anything, and Telo answers from Keewano with live SQL.
 
 ## Project layout
 
 ```
 src/server/
+  maintenance.ts       work orders: tenant intake, triage, owner approval, booking, entry notice, follow-up
+  portfolio/           the seeded firm (data.ts), phone routing and lookups, its history, Keewano-backed vendor ranking and repair history
   orchestrator.ts      task state machine: understand, plan, dial, review
   concierge.ts         routes every inbound message, call transcript and voice-tool request
   notify.ts            outbound messages, channel choice, dedupe, voice capture, text + call
@@ -175,8 +184,8 @@ src/server/
   background.ts        wakes scheduled calls, retries, missed-webhook recovery, memory sync, reminders, voice-line refresh
   time.ts              the user's timezone: "now" for Claude, calling hours, scheduled-time labels
 src/app/api/           webhooks/dial, mcp, state, tasks, messages, dev
-src/components/        dashboard (iMessage-style thread, task board, live call, task detail)
-scripts/               setup, tunnel, dial:setup, keewano:check, llm:check, lab (edge cases with real Claude), lab:calls (mid-call help, Claude as the voice agent)
+src/components/        dashboard: work-order board and live calls (work-board.tsx), the per-job flowchart (work-order-flow.tsx), thread, task detail
+scripts/               setup, tunnel, dial:setup, keewano:check, llm:check, seed:portfolio, lab (edge cases with real Claude), lab:calls (mid-call help, Claude as the voice agent)
 tests/                 unit + end-to-end tests on the simulated stack, including the autonomy edge cases
 ```
 
@@ -188,9 +197,12 @@ tests/                 unit + end-to-end tests on the simulated stack, including
 
 ## Known limitations
 
-- Single user (one `TELO_USER_PHONE`); the data model is per user throughout.
+- One firm and one manager (`TELO_USER_PHONE`). The portfolio is seeded in code (`src/server/portfolio/data.ts`); connecting Buildium or AppFolio comes later.
+- Work orders cover maintenance. Rent, turnovers, bids, leasing and renewals are researched (docs/property-management/) but not built.
+- A vendor is booked on the call. If neither can book, Telo gives the manager the comparison and calls back the one they pick.
+- Owner questions that aren't approvals ("how's my property?") are forwarded to the manager.
 - Dial-hosted calls don't stream transcripts, so the dashboard shows live status and the transcript lands when the call ends. The simulated line does stream.
 - Help while the business waits is tested in the call lab (Claude playing Dial's agent) and on the simulated line, not yet on a live Dial call. If Dial's agent can't talk between tool calls, the waits are silent; the fallback is the old "I'll confirm and call back".
-- The Keewano timeline read uses one SQL query per event column and reassembles events by second. This follows Keewano's documented step-function semantics but was not verified against a live project before the event; `npm run keewano:check` confirms it on site.
+- The Keewano timeline read uses one SQL query per event column and reassembles events by second. The work-order decisions use targeted aggregate queries instead, checked against the live project on demo day.
 - Business phone numbers come from the user, the directory or `DEMO_TARGET_PHONE`; there's no places lookup.
 - A status digest is written into the voice line's prompt so callers hear status even if the agent skips a tool call. That's fine for a single-user demo; turn it off with `TELO_INBOUND_STATUS_IN_PROMPT=false`.

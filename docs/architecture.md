@@ -18,6 +18,22 @@ The legal moves are in `src/server/domain/state-machine.ts`. Every transition is
 
 **Why the call can't be placed twice:** the task must win `ready → calling`, then the call row must win `planned → queued`, and Dial's `makeCall` gets `Idempotency-Key: telo:<callId>`. A step that throws is retried by the background loop with backoff. After three failures the task fails, and you're told.
 
+## Work orders (property management)
+
+A maintenance task carries `tasks.context` (`kind: "maintenance"`): its unit, property, owner, tenancy and asset ids, the triage result, the vendors in ranked order, and a `stage` that runs `triage → dispatching → booked → checking → closed`. `maintenance.ts` owns the steps that differ from a plain call task; the orchestrator calls into it:
+
+| Orchestrator step | For a work order |
+|---|---|
+| `understand` | `triage`: Claude's `triage-maintenance`, the emergency script, `wo.opened`, then Keewano ranks vendors and reads the asset's repairs (`portfolio/insights.ts`). Targets are the top two vendors; the authority envelope comes from the owner's approval limit. |
+| `plan` | Same planner; the legs always run in parallel. |
+| `ask_customer` (mid-call) | A decision goes to the owner by text (`question.context.party`), not the manager; `approval.requested` and `approval.granted` carry the response time, channel and `approval_while_holding`. |
+| `review` | `afterCalls`: `quote.received` per vendor; the vendor who booked on the call (within the limit, or approved by the owner) is booked; otherwise the manager gets the comparison. |
+| `wakeTask` | `wake`: "on the way?" to the vendor and "fixed?" to the tenant (stage `checking`). The tenant's "Y" runs `closeWorkOrder`: vendor outcome, promise kept, access, asset repaired, `wo.completed` with manager touches. |
+
+**Routing by phone number** (`portfolio/index.ts` `partyByPhone`): the manager's number is the user, as before. A tenant's text or call opens or updates their work order, an owner's text answers their open question (or is forwarded to the manager), and a vendor's text is forwarded. Messages to and from them are stored in the manager's thread with `messages.party`, which the dashboard labels.
+
+**Phones:** the seeded portfolio's numbers are fictional (555-01xx); `TELO_PORTFOLIO_PHONES` maps party ids to real phones for a live demo, and Telo never texts a fictional number on a real line.
+
 ## Webhooks and events
 
 - `POST /api/webhooks/dial` verifies `X-Dial-Signature` (HMAC-SHA256 over `${t}.${rawBody}`, 5-minute tolerance), stores the envelope in `webhook_receipts` keyed by `dial:<X-Dial-Event-ID>` (a redelivery is a no-op), returns 200, and processes in `after()`. Failed processing is retried by the background loop (up to 5 times).
@@ -61,6 +77,8 @@ Each task gets an authority envelope from `understand-task`: `allowed` (routine 
 
 `task.created`, `task.info_requested`, `task.info_received`, `task.plan_generated`, `memory.retrieved`, `call.started`, `call.connected`, `call.completed`, `call.failed`, `call.transcript_processed`, `business.fact_discovered`, `offer.received`, `offer.accepted`, `offer.declined`, `commitment.received`, `commitment.fulfilled`, `commitment.broken`, `confirmation.received`, `approval.requested`, `approval.granted`, `approval.denied`, `followup.required`, `task.completed`, `task.failed`, `task.cancelled`, `message.sent`, `preference.saved`, `email.received`, `calendar.event_created`, and the local-only `call.asked_user` and `calendar.checked`. The task page's "How Telo handled it" (`flow.ts`) folds these into one row per step.
 
+Work orders add `wo.opened`, `wo.deflected`, `emergency.routed`, `quote.received`, `vendor.declined`, `vendor.booked`, `entry_notice.sent`, `access.outcome`, `vendor.outcome`, `wo.completed`, `callback.opened`, `asset.registered`, `asset.repaired` and `asset.decision` (research.md section 5.3), and reuse approvals, commitments and calls with extra context.
+
 ### Keewano mapping
 
 Only events with a `typed` slice reach Keewano. `memory/keewano.ts` holds the catalog (custom event ids 2000+, append-only; the hash changes with the list).
@@ -70,10 +88,12 @@ Only events with a `typed` slice reach Keewano. `memory/keewano.ts` holds the ca
   - `org:<business>`: cross-user business behaviour; never carries confirmation codes
   - `task:<id>`
   - `user:<id>`
+- **Portfolio entities:** `pm`, `owner`, `property`, `unit`, `asset`, `vendor`, `tenancy`, `prospect`, `agency`. An event with `refs` (ids, never names) goes to the streams `PM_STREAMS` lists for its type; one without refs keeps the consumer routing above. Calls go to the party's stream by `call_party`; a promise to pay goes to the tenancy.
 - **One batch per entity.** Each batch starts with `entity_kind`, then context, then the anchor, all stamped with the event's second. For example, a promise becomes `confirmation_number("A1832")`, `commitment_amount_cents(2000)`, `commitment_received("account_credit")`.
 - **Idempotency:** `dataSessionId = uuidv5(eventId | entity)` with `batch: 1`, so a retry can't double-count.
 - **Spacing:** events from one call are recorded one second apart, so context columns can't collide.
 - **Reads:** for one entity, one `SELECT event_datetime, <column> FROM events WHERE user_id = '<uuid>'` per column over the Postgres wire protocol. Rows are regrouped by second into events, then merged with the last 60 minutes of Telo's own writes (`KEEWANO_CACHE_MINUTES`), which Keewano can't show yet.
+- **Decisions:** vendor ranking runs four aggregate queries at once (visits and jobs, no-shows, late arrivals, first-visit fixes) with the condition in `WHERE`, because Keewano rejects `count(...) FILTER (WHERE ...)`. The asset's repairs are one `SELECT event_datetime, repair_cents` on its stream. Both fall back to the local events when Keewano can't answer, and say so in the trace.
 - **Questions nobody prepared for:** `memory/keewano-ask.ts` has Claude write one read-only SELECT over the catalog columns. The statement is checked (SELECT only, no semicolons or write keywords), run, and the rows are answered from. The SQL is logged as a `memory.retrieved` event.
 
 ## Providers
