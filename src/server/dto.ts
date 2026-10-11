@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { CallDTO, LiveCallDTO, MessageDTO, QuestionDTO, StateDTO, TaskDetailDTO, TaskSummaryDTO } from "@/lib/types";
 import { config } from "./config";
 import { db } from "./db/client";
@@ -89,6 +89,28 @@ export async function buildState(userId: string): Promise<StateDTO> {
     messages: msgRows.reverse().map(messageDTO),
     liveUserCall: userCall && ["ringing", "in_progress"].includes(userCall.status) ? liveCall(userCall) : null,
     pairingCode: config.voice.provider === "dial" && config.voice.teloPhone ? await pairingCode() : null,
+    lastKeewanoQuery: await lastKeewanoQuery(userId),
+  };
+}
+
+/** askKeewano records its SQL as a task-less memory.retrieved event; the home screen shows the latest one. */
+async function lastKeewanoQuery(userId: string): Promise<StateDTO["lastKeewanoQuery"]> {
+  const rows = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.userId, userId), eq(events.type, "memory.retrieved"), isNull(events.taskId)))
+    .orderBy(desc(events.occurredAt))
+    .limit(10);
+  const e = rows.find((r) => (r.data as { via?: string }).via === "keewano-sql");
+  if (!e) return null;
+  const d = e.data as { sql?: string; rows?: number; ms?: number; answer?: string };
+  return {
+    question: e.summary.replace(/^Asked Keewano:\s*"?/, "").replace(/"$/, ""),
+    answer: d.answer ?? null,
+    sql: d.sql ?? "",
+    rows: Number(d.rows ?? 0),
+    ms: Number(d.ms ?? 0),
+    at: e.occurredAt.toISOString(),
   };
 }
 

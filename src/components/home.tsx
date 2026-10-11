@@ -1,13 +1,13 @@
 "use client";
 
-import { MessageSquare, Phone } from "lucide-react";
-import type { TaskSummaryDTO } from "@/lib/types";
+import { Database, MessageSquare, Phone } from "lucide-react";
+import type { StateDTO, TaskSummaryDTO } from "@/lib/types";
 import { useAppState } from "./api";
 import { DevTools } from "./dev-tools";
 import { LiveCallCard, VoiceBars } from "./live-call";
 import { TaskCard } from "./task-card";
 import { Thread } from "./thread";
-import { Logo, ModeChips, SectionTitle, formatPhone } from "./ui";
+import { Logo, ModeChips, SectionTitle, formatPhone, timeAgo } from "./ui";
 
 const NEEDS_YOU = ["needs_info", "needs_approval"];
 const WORKING = ["new", "planning", "ready", "calling", "reviewing", "scheduled"];
@@ -83,8 +83,35 @@ export function Home() {
           <Column title="Needs you" tasks={needsYou} empty={null} />
           <Column title="Telo is on it" tasks={working} empty={live.length ? null : needsYou.length ? null : "Nothing in progress. Send Telo something that needs a call."} />
           <Column title="Done" tasks={done} empty={null} />
+          {data?.lastKeewanoQuery && <KeewanoQuery q={data.lastKeewanoQuery} />}
           {data?.modes.devTools && <DevTools onChange={() => void mutate()} simulatedLine={data.modes.voice === "mock"} mail={data.modes.mail} />}
         </section>
+      </div>
+    </div>
+  );
+}
+
+/** The last question nobody prepared for: Claude wrote the SQL, it ran live on Keewano, and the answer came from the rows. */
+function KeewanoQuery({ q }: { q: NonNullable<StateDTO["lastKeewanoQuery"]> }) {
+  return (
+    <div>
+      <SectionTitle aside={<span className="text-[12px] text-faint">{timeAgo(q.at)}</span>}>
+        <span className="inline-flex items-center gap-1.5">
+          <Database className="size-3.5" /> Asked Keewano
+        </span>
+      </SectionTitle>
+      <div className="rounded-2xl border border-line bg-surface p-4">
+        <p className="text-[14px] font-medium">&ldquo;{q.question}&rdquo;</p>
+        {q.answer && <p className="mt-1 text-[13.5px] leading-snug text-muted">{q.answer}</p>}
+        <div className="mt-3 rounded-lg bg-surface-2 px-2.5 py-2">
+          <div className="flex justify-between text-[11px] text-faint">
+            <span>Live Keewano SQL, written by Claude</span>
+            <span>
+              {q.rows} rows · {q.ms} ms
+            </span>
+          </div>
+          <code className="scroll-thin mt-1 block max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-ink/70">{q.sql}</code>
+        </div>
       </div>
     </div>
   );

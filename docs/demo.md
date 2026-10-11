@@ -32,7 +32,7 @@ Presenter texts (or calls Telo and says): **"Ask Westbay Telecom to remove the n
 - Teammate (Westbay): "Westbay billing. I'll need the account number first."
 - Telo: "Let me check with Dylan, one moment." The presenter's phone buzzes (a text, and a call with Text + call on), and the dashboard's live call card shows **Westbay Telecom is waiting on the line** with a timer. Meanwhile Telo keeps the rep company: "Thanks for bearing with me…"
 - Answer in the live card (or by text, or on Telo's call): **"4471-0098"**. Telo reads it out on the same call.
-- Teammate: "Found it. That fee was a mistake, I've removed it. Confirmation W as in water, 7781."
+- Teammate: "Found it. That fee was a mistake, I've removed it. Confirmation W B 7781: W as in water, B as in boy."
 - Telo finishes with one call. On the task page, the call step shows **Asked you while they waited** and **You answered**.
 
 ## 3. Judgment
@@ -49,7 +49,7 @@ Presenter texts: **"Cancel my gym membership at Equinox."**
 
 Presenter texts: **"what's going on with everything?"**, then the judge's own question, e.g. **"how many times has a business broken a promise to me?"**
 
-That one is answered from Keewano with live SQL. The query appears in the server log, and in the dashboard as a "Checked past calls" step.
+That one is answered from Keewano with live SQL. The dashboard's **Asked Keewano** card shows the question, the answer, and the SQL Claude wrote, with rows and milliseconds.
 
 ## 5. Calendar (if Google is connected)
 

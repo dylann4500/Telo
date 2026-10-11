@@ -322,3 +322,13 @@ describe("who may use which tool", () => {
     expect((await m.live.callTool("get_status", {}, business)).isError).toBe(true);
   });
 });
+
+describe("the home screen shows the last question asked of Keewano", () => {
+  it("with its SQL, rows and timing", async () => {
+    const { recordEvent } = await import("../src/server/memory/events");
+    await recordEvent({ userId: "usr_default", type: "memory.retrieved", summary: 'Asked Keewano: "how many promises were broken?"', data: { via: "keewano-sql", sql: "SELECT count(*) AS n FROM events", rows: 1, ms: 412, answer: "One: Comcast's $20 credit." } });
+    const { buildState } = await import("../src/server/dto");
+    const q = (await buildState("usr_default")).lastKeewanoQuery;
+    expect(q).toMatchObject({ question: "how many promises were broken?", sql: "SELECT count(*) AS n FROM events", rows: 1, ms: 412, answer: "One: Comcast's $20 credit." });
+  });
+});

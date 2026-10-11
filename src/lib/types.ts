@@ -85,6 +85,8 @@ export interface StateDTO {
   liveUserCall: LiveCallDTO | null;
   /** Shown until the user's phone is linked: text "LINK <code>" to Telo's number. */
   pairingCode: string | null;
+  /** The latest question nobody prepared for, answered with live SQL on Keewano. */
+  lastKeewanoQuery: { question: string; answer: string | null; sql: string; rows: number; ms: number; at: string } | null;
 }
 
 export interface TurnDTO {
