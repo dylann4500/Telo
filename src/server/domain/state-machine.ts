@@ -11,7 +11,7 @@ export const TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   ready: ["calling", "reviewing", "needs_info", "failed", "cancelled"],
   calling: ["reviewing", "failed", "cancelled"],
   reviewing: ["ready", "planning", "needs_approval", "needs_info", "scheduled", "completed", "failed", "cancelled"],
-  needs_approval: ["reviewing", "planning", "completed", "cancelled", "failed"],
+  needs_approval: ["reviewing", "planning", "new", "completed", "cancelled", "failed"], // new: you said yes to a call Telo suggested from an email
   scheduled: ["ready", "planning", "reviewing", "cancelled", "failed"],
   completed: [],
   failed: ["new"], // the user can ask Telo to try again

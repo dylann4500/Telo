@@ -286,6 +286,28 @@ export async function decideTask(user: UserRow, taskId: string, optionId: string
       .set({ status: "answered", answeredAt: new Date(), answer: { optionId: option?.id ?? null, approve, note } })
       .where(eq(questions.id, q.id));
   }
+  // A call Telo offered after reading an email: yes starts it like any request.
+  const context = (q?.context ?? {}) as { suggestion?: boolean; phone?: string | null };
+  if (context.suggestion) {
+    await recordEvent({
+      userId: user.id,
+      taskId: task.id,
+      orgKey: task.orgKey,
+      type: approve ? "approval.granted" : "approval.denied",
+      summary: `You decided: ${decision}`,
+      typed: { approvalKind: "email_followup" },
+    });
+    if (!approve || option?.id === "skip") {
+      const stopped = await cancelTask(task.id, "You said not to call.");
+      if (stopped) await notify({ userId: user.id, taskId: task.id, kind: "reply", body: "Okay, I won't call them." });
+      return stopped;
+    }
+    // The number from the email was in the question the user just said yes to.
+    const targets = context.phone ? task.targets.map((t, i) => (i === 0 ? { ...t, phone: context.phone! } : t)) : task.targets;
+    const started = await transitionTask(task.id, "new", { targets, statusDetail: "Reading your request" }, ["needs_approval"]);
+    if (started) await advance(task.id);
+    return Boolean(started);
+  }
   const offerQuestion = /offer|instead|\$\d/.test(q?.prompt ?? "");
   await recordEvent({
     userId: user.id,

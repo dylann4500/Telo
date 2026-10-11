@@ -1,11 +1,11 @@
 "use client";
 
-import { FlaskConical, PhoneIncoming, RotateCcw, ScrollText } from "lucide-react";
+import { FlaskConical, Inbox, Mail, PhoneIncoming, RotateCcw, ScrollText } from "lucide-react";
 import { useState } from "react";
 import { post } from "./api";
 
 /** Demo controls: load the backstory, simulate Dylan calling Telo, start over. Hidden when TELO_DEV_TOOLS=false. */
-export function DevTools({ onChange, simulatedLine }: { onChange: () => void; simulatedLine: boolean }) {
+export function DevTools({ onChange, simulatedLine, mail }: { onChange: () => void; simulatedLine: boolean; mail: "gmail" | "mock" | "off" }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   async function run(name: string, url: string, body?: unknown) {
@@ -39,6 +39,21 @@ export function DevTools({ onChange, simulatedLine }: { onChange: () => void; si
           >
             <PhoneIncoming className="size-3.5" /> Simulate calling Telo
           </button>
+        )}
+        {mail !== "off" && (
+          <button disabled={!!busy} onClick={() => run("mail", "/api/dev/check-email")} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 hover:border-brand disabled:opacity-50">
+            <Inbox className="size-3.5" /> Check email now
+          </button>
+        )}
+        {mail === "mock" && (
+          <>
+            <button disabled={!!busy} onClick={() => run("receipt", "/api/dev/simulate-email", { preset: "receipt" })} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 hover:border-brand disabled:opacity-50">
+              <Mail className="size-3.5" /> Email: a refund receipt
+            </button>
+            <button disabled={!!busy} onClick={() => run("problem", "/api/dev/simulate-email", { preset: "problem" })} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 hover:border-brand disabled:opacity-50">
+              <Mail className="size-3.5" /> Email: a bill that went up
+            </button>
+          </>
         )}
         <button
           disabled={!!busy}

@@ -56,7 +56,7 @@ export function TaskDetail() {
           <StatusPill status={task.status} />
         </div>
         <p className="mt-1.5 text-[14px] text-muted">
-          {task.targets.length ? task.targets.join(", ") : "Who to call: still working it out"} · asked by {task.source === "web" ? "chat" : task.source === "voice" ? "phone" : "text"} · {timeAgo(task.createdAt)}
+          {task.targets.length ? task.targets.join(", ") : "Who to call: still working it out"} · {task.source === "email" ? "suggested from your email" : `asked by ${task.source === "web" ? "chat" : task.source === "voice" ? "phone" : "text"}`} · {timeAgo(task.createdAt)}
         </p>
         <blockquote className="mt-3 max-w-3xl border-l-2 border-brand/50 pl-3 text-[15px] text-ink/85">“{task.request}”</blockquote>
       </header>

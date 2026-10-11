@@ -18,6 +18,8 @@ export interface Modes {
   llm: "anthropic" | "mock";
   voice: "dial" | "mock";
   memory: "keewano" | "local";
+  mail: "gmail" | "mock" | "off";
+  calendar: "google" | "mock" | "off";
   devTools: boolean;
 }
 

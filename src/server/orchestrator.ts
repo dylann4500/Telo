@@ -1,9 +1,10 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import * as agent from "./agent";
 import { renderCallInstructions, shareableDetails } from "./agent/call-instructions";
 import { config } from "./config";
 import { db } from "./db/client";
-import { calls, organizations, questions, type CallRow, type TaskRow, type UserRow } from "./db/schema";
+import { calls, emails, organizations, questions, type CallRow, type TaskRow, type UserRow } from "./db/schema";
+import { getCalendar, userAvailability } from "./calendar";
 import type {
   ApprovalOption,
   CallAnalysis,
@@ -270,6 +271,8 @@ async function understand(task: TaskRow): Promise<boolean> {
     directory,
     knownFacts: task.facts.map((f) => ({ key: f.key, label: f.label, value: f.value })),
     recentBusinesses: await recentBusinesses(task.userId, task.id),
+    // Free/busy only. Lets Telo pick a time instead of asking "when works?".
+    availability: await userAvailability(user.timezone),
   });
 
   const targets: TaskTarget[] = r.targets.map((t) => {
@@ -576,6 +579,13 @@ export async function onBusinessCalledBack(taskId: string): Promise<boolean> {
   return Boolean(moved);
 }
 
+/** An email answered what a scheduled task was waiting on: review it now, before any call. */
+export async function onEmailForTask(taskId: string): Promise<boolean> {
+  const moved = await transitionTask(taskId, "reviewing", { wakeAt: null, statusDetail: "Reading their email" }, ["scheduled"]);
+  if (moved) kick(taskId);
+  return Boolean(moved);
+}
+
 /** scheduled → ready | planning: the time Telo set has come (or the user said "call now"). */
 export async function wakeTask(taskId: string): Promise<boolean> {
   const task = await getTask(taskId);
@@ -613,6 +623,7 @@ async function review(task: TaskRow): Promise<boolean> {
   const all = await listCalls(task.id);
   const business = all.filter((c) => c.kind === "business");
   const remaining = business.filter((c) => c.status === "planned");
+  const mails = await db.select().from(emails).where(eq(emails.taskId, task.id)).orderBy(asc(emails.receivedAt));
   const d = await agent.decideNext({
     now: now(user),
     task: { title: fresh.title, goal: fresh.goal, request: fresh.request, category: fresh.category },
@@ -635,12 +646,23 @@ async function review(task: TaskRow): Promise<boolean> {
     remainingLegs: remaining.map((c) => ({ target: c.targetName, purpose: c.purpose })),
     maxAttemptsPerLeg: config.calls.maxAttemptsPerLeg,
     latestDecision: fresh.followUp?.userDecision ?? null,
+    emails: mails.map((m) => ({
+      from: m.business,
+      kind: m.kind,
+      summary: m.summary,
+      amountUsd: m.amountCents != null ? m.amountCents / 100 : null,
+      confirmationNumber: m.confirmationNumber,
+      receivedAt: m.receivedAt?.toISOString() ?? null,
+    })),
   });
   if (d.learnedFacts.length) {
     await patchTask(task.id, { facts: mergeFacts(fresh.facts, d.learnedFacts.map((f) => ({ ...f, sensitive: false, source: "call" as const }))) });
   }
   const lastCall = business.filter((c) => c.analysis).at(-1);
-  const latestConfirmation = business.filter((c) => c.analysis?.confirmationNumbers.length).at(-1)?.analysis?.confirmationNumbers.at(-1) ?? null;
+  const latestConfirmation =
+    business.filter((c) => c.analysis?.confirmationNumbers.length).at(-1)?.analysis?.confirmationNumbers.at(-1) ??
+    mails.filter((m) => m.confirmationNumber).at(-1)?.confirmationNumber ??
+    null;
 
   // However the calls go, a task gets a bounded number of them.
   const placed = business.filter((c) => c.direction === "outbound" && c.status !== "planned" && c.status !== "canceled").length;
@@ -910,6 +932,7 @@ async function analyze(task: TaskRow, call: CallRow, user: UserRow): Promise<Cal
     decisionNeeded: null,
     callbackAt: null,
     infoRequested: [],
+    booking: null,
   };
   if (call.status === "canceled") return { ...empty, outcome: "failed", summary: "The call was cancelled.", nextStep: "None." };
   // Anyone who spoke gets read by the model, including a call that dropped halfway.
@@ -1052,6 +1075,7 @@ async function finalize(taskId: string, status: Extract<TaskStatus, "completed" 
   if (!moved) return false;
   // A retry that was queued but is no longer needed (they called back first, say).
   await db.update(calls).set({ status: "canceled", finishedAt: new Date() }).where(and(eq(calls.taskId, taskId), eq(calls.status, "planned")));
+  const onCalendar = status === "completed" ? await addBookingToCalendar(task, result.confirmation) : "";
   await recordEvent({
     userId: task.userId,
     taskId,
@@ -1064,10 +1088,45 @@ async function finalize(taskId: string, status: Extract<TaskStatus, "completed" 
     userId: task.userId,
     taskId,
     kind: status === "completed" ? "result" : "failure",
-    body: message || result.summary,
+    body: `${(message || result.summary).trim()}${onCalendar}`,
     dedupeKey: `done:${taskId}:${status}`,
   });
   return false;
+}
+
+/** Puts the appointment a call booked on the user's calendar. Returns a few words for the result text. */
+async function addBookingToCalendar(task: TaskRow, confirmation: string | null): Promise<string> {
+  const cal = getCalendar();
+  if (!cal || !config.calendar.addBookings) return "";
+  const call = (await listCalls(task.id)).filter((c) => c.kind === "business" && c.analysis?.booking && ["success", "partial"].includes(c.analysis.outcome)).at(-1);
+  const booking = call?.analysis?.booking;
+  const start = booking ? new Date(booking.startsAt) : null;
+  if (!call || !booking || !start || Number.isNaN(start.getTime()) || start.getTime() < Date.now() - 3600_000) return "";
+  const parsedEnd = booking.endsAt ? new Date(booking.endsAt) : null;
+  const end = parsedEnd && !Number.isNaN(parsedEnd.getTime()) && parsedEnd > start ? parsedEnd : new Date(start.getTime() + 3600_000);
+  const tz = (await getUser(task.userId))?.timezone ?? config.user.timezone;
+  try {
+    const ev = await cal.createEvent({
+      title: booking.title,
+      start,
+      end,
+      timeZone: tz,
+      location: booking.location,
+      description: [`Booked by Telo with ${call.targetName}.`, confirmation ? `Confirmation ${confirmation}.` : ""].filter(Boolean).join(" "),
+    });
+    await recordEvent({
+      userId: task.userId,
+      taskId: task.id,
+      orgKey: call.orgKey,
+      type: "calendar.event_created",
+      summary: `Added to your calendar: ${booking.title}, ${formatWhen(start, tz, { absolute: true })}`,
+      data: { eventId: ev.id, link: ev.link },
+    });
+    return " It's on your calendar.";
+  } catch (err) {
+    console.error("[calendar] couldn't add the booking", err);
+    return " I couldn't add it to your calendar.";
+  }
 }
 
 /** Stops a task and any call in flight. */

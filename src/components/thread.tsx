@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { ArrowUp, Phone } from "lucide-react";
+import { ArrowUp, Mail, Phone } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { MessageDTO, TaskSummaryDTO } from "@/lib/types";
 import { post } from "./api";
@@ -29,7 +29,7 @@ function divider(iso: string): string {
   return `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} at ${time}`;
 }
 
-const CHANNEL_LABEL: Record<string, string> = { sms: "Text Message", imessage: "iMessage", whatsapp: "WhatsApp", web: "From the dashboard", voice: "Phone call" };
+const CHANNEL_LABEL: Record<string, string> = { sms: "Text Message", imessage: "iMessage", whatsapp: "WhatsApp", web: "From the dashboard", voice: "Phone call", email: "From your email" };
 
 export function Thread({
   messages,
@@ -114,6 +114,18 @@ export function Thread({
           const endOfRun = !next || next.direction !== m.direction || new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() > 60_000;
           const task = m.taskId ? waiting.get(m.taskId) : undefined;
           const options = task && lastAsk.get(task.id) === messages.indexOf(m) ? task.waiting?.options : undefined;
+
+          if (m.kind === "email") {
+            // What Telo noticed in the inbox: a quiet note, not a text.
+            return (
+              <Fragment key={m.id}>
+                <div className="rise mx-auto my-2 flex max-w-[85%] items-start gap-2 rounded-2xl border border-black/5 px-3 py-2 text-[12.5px] text-im-meta dark:border-white/10">
+                  <Mail className="mt-0.5 size-3.5 shrink-0" />
+                  <span>{m.body}</span>
+                </div>
+              </Fragment>
+            );
+          }
 
           if (m.kind === "call") {
             return (

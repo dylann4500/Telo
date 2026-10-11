@@ -15,7 +15,7 @@ import type { MessageChannel } from "./voice/provider";
 // goes where the user asked; proactive updates go to the task's channel or
 // the user's preferred one. A dedupe key makes each milestone send once.
 
-export type MessageKind = "ack" | "question" | "update" | "approval" | "result" | "failure" | "status" | "reply";
+export type MessageKind = "ack" | "question" | "update" | "approval" | "result" | "failure" | "status" | "reply" | "email";
 
 // While the user is on a live call with Telo (Dial's agent calling our MCP
 // tools), messages are captured and spoken back instead of texted.

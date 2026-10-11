@@ -82,7 +82,7 @@ export function Home() {
           <Column title="Needs you" tasks={needsYou} empty={null} />
           <Column title="Telo is on it" tasks={working} empty={live.length ? null : needsYou.length ? null : "Nothing in progress. Send Telo something that needs a call."} />
           <Column title="Done" tasks={done} empty={null} />
-          {data?.modes.devTools && <DevTools onChange={() => void mutate()} simulatedLine={data.modes.voice === "mock"} />}
+          {data?.modes.devTools && <DevTools onChange={() => void mutate()} simulatedLine={data.modes.voice === "mock"} mail={data.modes.mail} />}
         </section>
       </div>
     </div>

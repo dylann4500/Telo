@@ -40,7 +40,9 @@ export type TeloEventType =
   | "task.cancelled"
   | "message.sent"
   | "message.received"
-  | "preference.saved";
+  | "preference.saved"
+  | "email.received"
+  | "calendar.event_created";
 
 export interface RecordEventInput {
   id?: string; // pass a deterministic id when the same event may be recorded twice

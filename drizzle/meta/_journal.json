@@ -15,6 +15,13 @@
       "when": 1791692321617,
       "tag": "0001_scheduling",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791707384568,
+      "tag": "0002_mail",
+      "breakpoints": true
     }
   ]
 }

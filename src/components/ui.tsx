@@ -114,6 +114,8 @@ const MODE_LABEL: Record<keyof Omit<Modes, "devTools">, { name: string; live: st
   llm: { name: "Claude", live: "anthropic" },
   voice: { name: "Dial", live: "dial" },
   memory: { name: "Keewano", live: "keewano" },
+  mail: { name: "Gmail", live: "gmail" },
+  calendar: { name: "Calendar", live: "google" },
 };
 
 export function ModeChips({ modes }: { modes: Modes }) {
@@ -121,10 +123,11 @@ export function ModeChips({ modes }: { modes: Modes }) {
     <div className="flex flex-wrap items-center gap-1.5">
       {(Object.keys(MODE_LABEL) as (keyof typeof MODE_LABEL)[]).map((k) => {
         const live = modes[k] === MODE_LABEL[k].live;
+        const off = modes[k] === "off";
         return (
           <span
             key={k}
-            title={live ? `${MODE_LABEL[k].name} is connected` : `${MODE_LABEL[k].name} is simulated locally`}
+            title={live ? `${MODE_LABEL[k].name} is connected` : off ? `${MODE_LABEL[k].name} isn't connected (npm run google:connect)` : `${MODE_LABEL[k].name} is simulated locally`}
             className={clsx(
               "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
               live ? "border-transparent bg-live-soft text-live" : "border-line bg-surface text-muted",
@@ -132,7 +135,7 @@ export function ModeChips({ modes }: { modes: Modes }) {
           >
             <span className={clsx("size-1.5 rounded-full", live ? "bg-live" : "bg-faint")} />
             {MODE_LABEL[k].name}
-            <span className="opacity-70">{live ? "live" : "simulated"}</span>
+            <span className="opacity-70">{live ? "live" : off ? "off" : "simulated"}</span>
           </span>
         );
       })}

@@ -30,6 +30,7 @@ async function main() {
     directory: [{ name: "Equinox", phone: "+14155550100", aliases: ["gym"] }],
     knownFacts: [],
     recentBusinesses: [],
+    availability: null,
   });
   console.log(`● ${config.llm.model} (main) understood it in ${Date.now() - t} ms -> "${u.title}", asks: ${u.missing.map((m) => m.label).join(", ") || "nothing"}`);
   console.log(`  acknowledgement: ${u.acknowledgement}`);

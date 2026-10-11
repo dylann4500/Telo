@@ -59,7 +59,14 @@ export async function buildState(userId: string): Promise<StateDTO> {
     orderBy: desc(calls.createdAt),
   });
   return {
-    modes: { llm: config.llm.provider, voice: config.voice.provider, memory: config.memory.provider, devTools: config.demo.devTools },
+    modes: {
+      llm: config.llm.provider,
+      voice: config.voice.provider,
+      memory: config.memory.provider,
+      mail: config.mail.provider,
+      calendar: config.calendar.provider,
+      devTools: config.demo.devTools,
+    },
     user: { name: user?.name ?? config.user.name, phone: user?.phone ?? null, channel: user?.channel ?? config.user.channel },
     teloPhone: config.voice.teloPhone,
     tasks: taskRows.map((t) =>

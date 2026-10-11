@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 /** Short, prefixed, URL-safe ids like `tsk_k3j9x0a1b2c3`. */
-export function newId(prefix: "usr" | "tsk" | "call" | "q" | "msg" | "evt"): string {
+export function newId(prefix: "usr" | "tsk" | "call" | "q" | "msg" | "evt" | "mail" | "cal"): string {
   const bytes = randomBytes(12);
   let out = "";
   for (const b of bytes) out += ALPHABET[b % ALPHABET.length];

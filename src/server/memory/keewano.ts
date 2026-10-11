@@ -55,6 +55,8 @@ export const CATALOG: readonly CatalogEntry[] = [
   { eventTypeId: 2021, name: "approval_granted", dataType: "string" },
   { eventTypeId: 2022, name: "approval_denied", dataType: "string" },
   { eventTypeId: 2023, name: "message_sent", dataType: "string" },
+  { eventTypeId: 2024, name: "email_received", dataType: "string" },
+  { eventTypeId: 2025, name: "email_amount_cents", dataType: "price_usd_cent" },
 ];
 
 const BY_NAME = new Map(CATALOG.map((c) => [c.name, c]));
@@ -130,6 +132,7 @@ const ANCHORS: Record<string, string> = {
   "approval.granted": "approval_granted",
   "approval.denied": "approval_denied",
   "message.sent": "message_sent",
+  "email.received": "email_received",
 };
 
 function anchorValue(type: string, t: TypedFacts): string {
@@ -163,6 +166,8 @@ function anchorValue(type: string, t: TypedFacts): string {
       return t.approvalKind ?? "other";
     case "message.sent":
       return t.channel ?? "sms";
+    case "email.received":
+      return t.emailKind ?? "other";
     default:
       return "other";
   }
@@ -212,6 +217,10 @@ export function toKeewanoEvents(e: Pick<MemoryEvent, "type" | "occurredAt" | "ty
     case "approval.granted":
     case "approval.denied":
       if (t.amountCents != null) out.push(ev("approval_amount_cents", cents(t.amountCents)));
+      break;
+    case "email.received":
+      if (personal && t.confirmationNumber) out.push(ev("confirmation_number", t.confirmationNumber.slice(0, 64)));
+      if (t.amountCents != null) out.push(ev("email_amount_cents", cents(t.amountCents)));
       break;
   }
   out.push(ev(anchor, anchorValue(e.type, t).slice(0, 64)));
@@ -462,6 +471,10 @@ function typedFromColumns(type: string, cols: Map<string, unknown>): TypedFacts 
     t.amountCents = num("approval_amount_cents");
   } else if (type === "message.sent") {
     t.channel = String(v);
+  } else if (type === "email.received") {
+    t.emailKind = String(v);
+    t.amountCents = num("email_amount_cents");
+    t.confirmationNumber = str("confirmation_number");
   }
   return Object.fromEntries(Object.entries(t).filter(([, x]) => x !== undefined && !Number.isNaN(x))) as TypedFacts;
 }
@@ -503,6 +516,8 @@ export function summarizeTyped(type: string, t: TypedFacts): string {
       return `You declined: ${words(t.approvalKind)}`;
     case "message.sent":
       return `Update sent (${t.channel})`;
+    case "email.received":
+      return `Email: ${words(t.emailKind)}${usd(t.amountCents)}${conf}`;
     default:
       return type;
   }

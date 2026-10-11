@@ -81,6 +81,9 @@ export const UnderstandSchema = z.object({
   missing: z.array(InfoFieldSchema).describe("Only information the calls genuinely need and Telo lacks"),
   constraints: z.array(z.string()).describe("Time windows, budgets, party size, preferences for this task"),
   authority: AuthoritySchema,
+  usesUserTime: z
+    .boolean()
+    .describe("true if the result is something the user must attend or be free for: an appointment, reservation, visit, delivery window, or a call or meeting with them"),
   callAt: z
     .string()
     .nullable()
@@ -170,6 +173,15 @@ export const CallAnalysisSchema = z.object({
   infoRequested: z
     .array(z.object({ label: z.string(), reason: z.string() }))
     .describe("Details the business asked for that Telo didn't have (account number, date of birth...)"),
+  booking: z
+    .object({
+      title: z.string().describe("Short calendar title, e.g. 'Dentist cleaning, Bright Smile Dental'"),
+      startsAt: z.string().describe("ISO 8601 with offset, resolved from now"),
+      endsAt: z.string().nullable(),
+      location: z.string().nullable(),
+    })
+    .nullable()
+    .describe("Set when the call booked, moved or confirmed an appointment, reservation, visit or delivery window for the user at a specific time"),
   nextStep: z.string(),
 });
 
@@ -205,6 +217,25 @@ export const DecideSchema = z.object({
   learnedFacts: z.array(z.object({ key: z.string(), label: z.string(), value: z.string() })),
 });
 export type DecideResult = z.infer<typeof DecideSchema>;
+
+export const ReadEmailSchema = z.object({
+  relevant: z
+    .boolean()
+    .describe("true only for mail from a business about the user's own dealings: an order, receipt, refund, booking, appointment, bill, claim, delivery or account problem"),
+  business: z.string().nullable().describe("Who it's from, as a short business name (a directory name when one matches)"),
+  kind: z.enum(["receipt", "refund", "confirmation", "appointment", "bill", "claim", "delivery", "cancellation", "problem", "other"]),
+  summary: z.string().describe("One sentence for the user: what the email says, with the amount and date if any. No account numbers"),
+  amountUsd: z.number().nullable(),
+  confirmationNumber: z.string().nullable().describe("An order, confirmation, reference or case number it states"),
+  taskId: z.string().nullable().describe("The open task this email is about (ids from open_tasks only)"),
+  settlesTask: z.boolean().describe("true only if the email by itself completes that task (the receipt or confirmation it was waiting for)"),
+  needsCall: z
+    .boolean()
+    .describe("true if a phone call would likely fix or move something forward: a problem, a denial, a charge that looks wrong, a request to call, a missed or cancelled appointment"),
+  callReason: z.string().nullable().describe("If needsCall: the request in the user's words, e.g. 'Call Comcast to dispute the $15 late fee'"),
+  phone: z.string().nullable().describe("A phone number the email gives for reaching them, exactly as written"),
+});
+export type ReadEmailResult = z.infer<typeof ReadEmailSchema>;
 
 export const StatusReplySchema = z.object({
   reply: z.string().describe("The text Telo sends back. Short, specific, no filler"),

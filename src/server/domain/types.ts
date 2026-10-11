@@ -20,7 +20,7 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 export const TERMINAL_STATUSES: readonly TaskStatus[] = ["completed", "failed", "cancelled"];
 export const WAITING_ON_USER: readonly TaskStatus[] = ["needs_info", "needs_approval"];
 
-export type Channel = "sms" | "imessage" | "whatsapp" | "web" | "voice";
+export type Channel = "sms" | "imessage" | "whatsapp" | "web" | "voice" | "email"; // email: a task Telo suggested from the inbox
 
 export type TaskCategory = "reservation" | "membership" | "support" | "quotes" | "inquiry" | "other";
 
@@ -134,6 +134,8 @@ export interface CallAnalysis {
   callbackAt: string | null;
   // Things the business asked for that Telo couldn't provide.
   infoRequested: { label: string; reason: string }[];
+  // An appointment or reservation this call booked, for the user's calendar.
+  booking?: { title: string; startsAt: string; endsAt: string | null; location: string | null } | null;
   nextStep: string;
 }
 
@@ -155,6 +157,7 @@ export interface TypedFacts {
   dueAt?: string; // ISO
   confirmationNumber?: string;
   briefUsed?: boolean;
+  emailKind?: string;
 }
 
 export const OFFER_KINDS = ["retention_discount", "quote", "fee_waiver", "payment_plan", "upgrade", "other"] as const;

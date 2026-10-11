@@ -130,6 +130,33 @@ export const calls = sqliteTable(
   ],
 );
 
+// One row per inbox message Telo has looked at, so none is read twice. Only
+// what Telo extracted is kept: never the body, and the subject only for mail
+// that mattered.
+export const emails = sqliteTable(
+  "emails",
+  {
+    id: text("id").primaryKey(), // the provider's message id
+    userId: text("user_id").notNull(),
+    provider: text("provider").notNull(),
+    status: text("status").$type<"new" | "ignored" | "processed" | "failed">().notNull(),
+    fromDomain: text("from_domain"),
+    receivedAt: integer("received_at", { mode: "timestamp_ms" }),
+    subject: text("subject"),
+    business: text("business"),
+    orgKey: text("org_key"),
+    kind: text("kind"),
+    summary: text("summary"),
+    amountCents: integer("amount_cents"),
+    confirmationNumber: text("confirmation_number"),
+    taskId: text("task_id"),
+    needsCall: integer("needs_call", { mode: "boolean" }),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("emails_task_idx").on(t.taskId)],
+);
+
 export const questions = sqliteTable(
   "questions",
   {

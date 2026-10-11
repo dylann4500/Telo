@@ -66,6 +66,29 @@ export const config = {
     },
   },
 
+  google: {
+    // A "Desktop app" OAuth client in Google Cloud. `npm run google:connect`
+    // signs in once and saves the refresh token here.
+    clientId: env("GOOGLE_CLIENT_ID"),
+    clientSecret: env("GOOGLE_CLIENT_SECRET"),
+    refreshToken: env("GOOGLE_REFRESH_TOKEN"),
+    account: env("GOOGLE_ACCOUNT_EMAIL") ?? null,
+  },
+
+  mail: {
+    // gmail: read the inbox (read-only). mock: a local inbox for tests and demos.
+    provider: pick("MAIL_PROVIDER", ["gmail", "mock", "off"] as const, env("GOOGLE_REFRESH_TOKEN") ? "gmail" : "off"),
+    pollSeconds: Number(env("TELO_MAIL_POLL_SECONDS") ?? "60"),
+    // How far back the inbox scan looks (it never reprocesses a message).
+    lookbackDays: Number(env("TELO_MAIL_LOOKBACK_DAYS") ?? "2"),
+  },
+
+  calendar: {
+    // google: free/busy for suggesting times, and bookings written to the primary calendar.
+    provider: pick("CALENDAR_PROVIDER", ["google", "mock", "off"] as const, env("GOOGLE_REFRESH_TOKEN") ? "google" : "off"),
+    addBookings: env("TELO_CALENDAR_ADD_BOOKINGS") !== "false",
+  },
+
   demo: {
     // During a hackathon demo the "business" is a teammate's phone. Any
     // business without a known number is dialed here instead.

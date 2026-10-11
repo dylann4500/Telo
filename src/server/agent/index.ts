@@ -58,6 +58,7 @@ export function understandTask(input: {
   directory: { name: string; phone: string | null; aliases: string[] }[];
   knownFacts: { key: string; label: string; value: string }[];
   recentBusinesses: { business: string; lastTask: string; when: string; outcome: string | null }[];
+  availability: string | null;
 }) {
   return getLLM().structured({
     name: "understand-task",
@@ -69,6 +70,7 @@ export function understandTask(input: {
       directory: input.directory,
       facts_already_provided: input.knownFacts.length ? input.knownFacts : undefined,
       recent_businesses: input.recentBusinesses.length ? input.recentBusinesses : undefined,
+      user_availability: input.availability ?? undefined,
       request: input.request,
     }),
     schema: S.UnderstandSchema,
@@ -160,6 +162,7 @@ export function decideNext(input: {
   remainingLegs: { target: string; purpose: string }[];
   maxAttemptsPerLeg: number;
   latestDecision: string | null;
+  emails: { from: string | null; kind: string | null; summary: string | null; amountUsd: number | null; confirmationNumber: string | null; receivedAt: string | null }[];
 }) {
   return getLLM().structured({
     name: "decide-next",
@@ -174,9 +177,26 @@ export function decideNext(input: {
       planned_calls_not_yet_made: input.remainingLegs,
       max_attempts_per_call: input.maxAttemptsPerLeg,
       users_latest_decision: input.latestDecision ?? undefined,
+      emails: input.emails.length ? input.emails : undefined,
     }),
     schema: S.DecideSchema,
     effort: "medium",
+  });
+}
+
+export function readEmail(input: {
+  now: string;
+  email: { from: string; fromName: string | null; subject: string; receivedAt: string; text: string };
+  directory: string[];
+  openTasks: { id: string; title: string; status: string; statusDetail: string | null; businesses: string[] }[];
+}) {
+  return getLLM().structured({
+    name: "read-email",
+    tier: "fast",
+    system: P.READ_EMAIL_SYSTEM,
+    prompt: context({ now: input.now, directory: input.directory, open_tasks: input.openTasks, email: input.email }),
+    schema: S.ReadEmailSchema,
+    effort: "low",
   });
 }
 

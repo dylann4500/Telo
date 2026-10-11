@@ -9,6 +9,7 @@ import { isTaskBusy, kick, wakeTask } from "./orchestrator";
 import { statusDigest } from "./status";
 import { getUser, openQuestion, patchTask } from "./tasks/repo";
 import { clampToCallingHours, formatWhen, withinCallingHours } from "./time";
+import { pollInbox } from "./inbox";
 import { getVoice } from "./voice";
 import { normalizeDialEvent } from "./voice/dial-webhook";
 import { inboundPrompt } from "./voice/inbound-prompt";
@@ -18,7 +19,7 @@ import { finishCall, ingestVoiceEvent } from "./voice/ingest";
 // wakes tasks scheduled for later (callbacks, delayed retries), retries task
 // steps that errored, finishes calls whose webhooks never arrived, retries
 // failed webhook processing, mirrors events to memory, nudges the user about
-// unanswered questions, and keeps the voice line's prompt current.
+// unanswered questions, reads new email, and keeps the voice line's prompt current.
 
 const g = globalThis as unknown as { __teloLoop?: ReturnType<typeof setInterval>; __teloTicking?: boolean; __teloTicks?: number };
 
@@ -44,6 +45,10 @@ async function tick() {
   await refreshVoiceLine();
   g.__teloTicks = (g.__teloTicks ?? 0) + 1;
   if (g.__teloTicks % 15 === 1) await remindWaitingUsers(); // about once a minute
+  // The inbox runs on its own, so a slow read never holds up wakes and calls.
+  if (config.mail.provider !== "off" && g.__teloTicks % Math.max(1, Math.round(config.mail.pollSeconds / 4)) === 1) {
+    void pollInbox().catch((err) => console.error("[background] inbox poll failed", err));
+  }
 }
 
 /** Scheduled tasks whose time has come. */

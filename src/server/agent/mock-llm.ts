@@ -123,6 +123,8 @@ export class MockLLM implements LLM {
         return this.status(b);
       case "brief-history":
         return this.brief(b);
+      case "read-email":
+        return this.readEmail(b);
       case "simulate-call":
         return { outcome: "answered", turns: [] };
       default:
@@ -214,7 +216,11 @@ export class MockLLM implements LLM {
     if (category === "membership" && !email) {
       missing.push({ key: "account_email", label: "Email on the account", question: "What's the email on the membership?", sensitive: true, required: true });
     }
-    if (category === "reservation" && !/\b\d{1,2}(:\d{2})?\s*(am|pm)?\b|tonight|tomorrow|morning|afternoon|evening/i.test(request)) {
+    const availability = typeof b.user_availability === "string" ? b.user_availability : null;
+    const userName = (b.user_profile as { name?: string } | undefined)?.name ?? "the user";
+    const calendarLine = availability ? `Free on ${userName}'s calendar: ${availability.split("; ").slice(0, 3).join("; ")}` : null;
+    const firstFree = availability?.match(/^([^:]+): ([^,;-]+)/);
+    if (category === "reservation" && !availability && !/\b\d{1,2}(:\d{2})?\s*(am|pm)?\b|tonight|tomorrow|morning|afternoon|evening/i.test(request)) {
       missing.push({ key: "time", label: "Preferred time", question: "What day and time works?", sensitive: false, required: true });
     }
     const verb = { membership: "Cancel", support: "Sort out bill with", reservation: "Book", quotes: "Get quotes", inquiry: "Call", other: "Call" }[category] ?? "Call";
@@ -243,7 +249,8 @@ export class MockLLM implements LLM {
           : [],
       facts,
       missing,
-      constraints: moneyValues(request).map((v) => `Budget up to $${v}`),
+      constraints: [...moneyValues(request).map((v) => `Budget up to $${v}`), ...(category === "reservation" && calendarLine ? [calendarLine] : [])],
+      usesUserTime: category === "reservation" || category === "quotes",
       callAt,
       authority: {
         allowed: ["Do exactly what was asked", "Ask about policies, fees and timing"],
@@ -251,7 +258,13 @@ export class MockLLM implements LLM {
         never: ["Share passwords or PINs"],
         spendLimitUsd: moneyValues(request)[0] ?? null,
       },
-      acknowledgement: missing.length ? `On it. ${ask}` : when ? `Got it. I'll call ${name ?? "them"} ${when}.` : `On it. I'll call ${name ?? "them"} and let you know how it goes.`,
+      acknowledgement: missing.length
+        ? `On it. ${ask}`
+        : when
+          ? `Got it. I'll call ${name ?? "them"} ${when}.`
+          : category === "reservation" && firstFree
+            ? `On it. You're free ${firstFree[1]} from ${firstFree[2].trim()}, so I'll aim for that.`
+            : `On it. I'll call ${name ?? "them"} and let you know how it goes.`,
     };
   }
 
@@ -299,7 +312,13 @@ export class MockLLM implements LLM {
       priorCommitments: [] as unknown[],
       callbackAt: null as string | null,
       infoRequested: [] as { label: string; reason: string }[],
+      booking: null as unknown,
     };
+    if (/booked|got you down|moved it|scheduled you|see you (then|tomorrow)/i.test(them)) {
+      const startsAt = laterTime(them, b);
+      const where = (b.call_brief as { targetName?: string } | undefined)?.targetName;
+      if (startsAt) base.booking = { title: `${(b.task as { title: string }).title}${where ? ` (${where})` : ""}`, startsAt, endsAt: null, location: null };
+    }
     const priorConf = (String(b.prior_history_given_to_agent ?? "") + " " + JSON.stringify(b.call_brief ?? "")).match(/confirmation ([A-Z0-9]{4,})/i)?.[1] ?? null;
     if (/never (got )?applied|wasn't applied|was not applied|don't see (it|the credit)|no record/i.test(all) && priorConf) {
       base.priorCommitments.push({ kind: "account_credit", description: "Previously promised credit was never applied", status: "broken", confirmationNumber: priorConf.toUpperCase() });
@@ -413,6 +432,12 @@ export class MockLLM implements LLM {
     const a = last?.analysis;
     const base = { question: null, callback: null, result: null, learnedFacts: [], scheduleAt: null, infoFields: [] };
     const decision = b.users_latest_decision as string | undefined;
+    const mails = (b.emails as { from: string | null; kind: string | null; summary: string | null; confirmationNumber: string | null }[] | undefined) ?? [];
+    const settling = mails.filter((m) => m.confirmationNumber && ["refund", "receipt", "confirmation"].includes(m.kind ?? "")).at(-1);
+    if (settling && (!a || ["callback_required", "partial", "no_answer", "voicemail"].includes(a.outcome))) {
+      const msg = `${settling.from} emailed: ${settling.summary} No need to call them again.`;
+      return { ...base, action: "complete", userMessage: msg, result: { outcome: "success", summary: settling.summary ?? "Settled by email.", confirmation: settling.confirmationNumber } };
+    }
     const followUp = (purpose: string) => ({ targetName: last.target, purpose, objective: task.title, talkingPoints: [purpose] });
     if (a?.outcome === "callback_required" && a.callbackAt) {
       return { ...base, action: "schedule", scheduleAt: a.callbackAt, callback: followUp("Follow up as they asked"), userMessage: "" };
@@ -461,6 +486,36 @@ export class MockLLM implements LLM {
       return { ...base, action: "complete", userMessage: a.summary, result: { outcome: a.outcome === "success" ? "success" : "partial", summary: a.summary, confirmation: conf } };
     }
     return { ...base, action: "fail", userMessage: `I couldn't get through on "${task.title}". Want me to try again later?`, result: { outcome: "failed", summary: a?.summary ?? "Could not complete.", confirmation: null } };
+  }
+
+  private readEmail(b: Blocks) {
+    const email = b.email as { from: string; fromName: string | null; subject: string; text: string };
+    const directory = (b.directory as string[]) ?? [];
+    const tasks = (b.open_tasks as { id: string; status: string; businesses: string[] }[]) ?? [];
+    const all = `${email.subject}\n${email.text}`;
+    const lower = all.toLowerCase();
+    const businessy = /receipt|order|refund|confirm|booking|reservation|appointment|bill|statement|invoice|claim|payment|charge|delivery|shipped|cancel|account/i.test(all);
+    const marketing = /unsubscribe|newsletter|% off|sale ends/i.test(all) && !/receipt|refund/i.test(all);
+    const relevant = businessy && !marketing;
+    const business = directory.find((d) => lower.includes(d.toLowerCase())) ?? email.fromName ?? email.from.split("@")[1] ?? null;
+    const needsCall = /denied|declined|overdue|past due|wrong|incorrect|please call|call us|missed|dispute/i.test(all);
+    const kind = /refund/i.test(all) ? "refund" : /appointment/i.test(all) ? "appointment" : needsCall ? "problem" : /bill|statement|invoice/i.test(all) ? "bill" : /receipt|order/i.test(all) ? "receipt" : /confirm/i.test(all) ? "confirmation" : "other";
+    const amount = moneyValues(all)[0] ?? null;
+    const conf = confirmationNumbers(all)[0] ?? null;
+    const task = tasks.find((t) => t.businesses.some((x) => x.toLowerCase() === (business ?? "").toLowerCase()));
+    return {
+      relevant,
+      business: relevant ? business : null,
+      kind,
+      summary: relevant ? `${email.subject.replace(/\.$/, "")}${amount != null && !email.subject.includes("$") ? ` ($${amount})` : ""}.` : "",
+      amountUsd: amount,
+      confirmationNumber: conf,
+      taskId: relevant ? task?.id ?? null : null,
+      settlesTask: Boolean(relevant && task && conf && !needsCall && ["refund", "receipt", "confirmation"].includes(kind)),
+      needsCall: relevant && needsCall,
+      callReason: relevant && needsCall ? `Call ${business} about the ${kind}` : null,
+      phone: all.match(PHONE)?.[0] ?? null,
+    };
   }
 
   private status(b: Blocks) {
