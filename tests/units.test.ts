@@ -135,3 +135,19 @@ describe("helpers", () => {
     expect(sanitizeForSms("Done — it’s “booked”…")).toBe('Done - it\'s "booked"...');
   });
 });
+
+describe("which business a question names", () => {
+  it("matches the full name, an alias, or a distinctive word of the name", async () => {
+    const { mentionedBusinesses } = await import("../src/server/status");
+    const orgs = [
+      { name: "Harborview Hotel", aliases: [] },
+      { name: "Pacific Coast Airlines", aliases: [] },
+      { name: "Comcast", aliases: ["xfinity"] },
+    ];
+    expect(mentionedBusinesses("What did Harborview email me?", orgs).map((o) => o.name)).toEqual(["Harborview Hotel"]);
+    expect(mentionedBusinesses("any news from xfinity?", orgs).map((o) => o.name)).toEqual(["Comcast"]);
+    expect(mentionedBusinesses("what did Pacific Coast Airlines say?", orgs).map((o) => o.name)).toEqual(["Pacific Coast Airlines"]);
+    expect(mentionedBusinesses("what's happening in the pacific?", orgs)).toEqual([]); // too generic alone
+    expect(mentionedBusinesses("how's everything going?", orgs)).toEqual([]);
+  });
+});

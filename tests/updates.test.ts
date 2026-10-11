@@ -1,7 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaceCallInput, VoiceProvider } from "../src/server/voice/provider";
 
@@ -209,8 +208,7 @@ describe("texts only", () => {
 describe("a call Telo offers from an email", () => {
   it("found at night: waits on the dashboard, then goes out once as a text in the morning", async () => {
     vi.setSystemTime(NIGHT);
-    const { MockMail } = await import("../src/server/mail/mock");
-    const mail = m.mail.getMail() as InstanceType<typeof MockMail>;
+    const mail = m.mail.getMail() as import("../src/server/mail/mock").MockMail;
     mail.deliver({ from: "billing@coastline.example", fromName: "Coastline Cable", subject: "Your bill went up", text: "Hi Dylan, your bill went from $70.00 to $85.00 because of a new equipment fee. Please call us if this looks wrong." });
     await m.inbox.pollInbox();
     const task = await emailTask();
@@ -233,8 +231,7 @@ describe("a call Telo offers from an email", () => {
   });
 
   it("found during the day: texts and, with calls on, calls", async () => {
-    const { MockMail } = await import("../src/server/mail/mock");
-    const mail = m.mail.getMail() as InstanceType<typeof MockMail>;
+    const mail = m.mail.getMail() as import("../src/server/mail/mock").MockMail;
     mail.deliver({ from: "billing@sunnet.example", fromName: "SunNet Fiber", subject: "Charge on your account", text: "Hi Dylan, a $40.00 late fee was added to your account. Please call us if this looks wrong." });
     await m.inbox.pollInbox();
     const task = await emailTask();
@@ -253,4 +250,3 @@ describe("after Telo calls the user", () => {
   });
 });
 
-void eq;
