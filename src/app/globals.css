@@ -1,26 +1,167 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --bg: #f5f3ee;
+  --surface: #ffffff;
+  --surface-2: #faf9f6;
+  --ink: #1d1c19;
+  --muted: #6e6a61;
+  --faint: #a29d92;
+  --line: #e6e2d8;
+  --brand: #e8553a;
+  --brand-ink: #ffffff;
+  --brand-soft: #fde9e3;
+  --live: #16a34a;
+  --live-soft: #dcfce7;
+  --wait: #b45309;
+  --wait-soft: #fef3c7;
+  --work: #4f46e5;
+  --work-soft: #e0e7ff;
+  --bad: #be123c;
+  --bad-soft: #ffe4e6;
+  --done: #3f6212;
+  --done-soft: #ecfccb;
+  --bubble-me: #1d1c19;
+  --bubble-me-ink: #ffffff;
+  /* Messages-app palette for the thread */
+  --im-bg: #ffffff;
+  --im-gray: #e9e9eb;
+  --im-gray-ink: #000000;
+  --im-blue: #0b84fe;
+  --im-green: #34c759;
+  --im-meta: #8e8e93;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg: #0f1012;
+    --surface: #17181b;
+    --surface-2: #1c1d21;
+    --ink: #f1efe9;
+    --muted: #a19c91;
+    --faint: #6d6960;
+    --line: #2a2b30;
+    --brand: #f2694f;
+    --brand-soft: #3a1d17;
+    --live: #4ade80;
+    --live-soft: #12301d;
+    --wait: #fbbf24;
+    --wait-soft: #3a2a0c;
+    --work: #a5b4fc;
+    --work-soft: #1f2245;
+    --bad: #fb7185;
+    --bad-soft: #3b1420;
+    --done: #bef264;
+    --done-soft: #23300f;
+    --bubble-me: #f1efe9;
+    --bubble-me-ink: #17181b;
+    --im-bg: #000000;
+    --im-gray: #262629;
+    --im-gray-ink: #ffffff;
+    --im-meta: #8e8e93;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-live: var(--live);
+  --color-live-soft: var(--live-soft);
+  --color-wait: var(--wait);
+  --color-wait-soft: var(--wait-soft);
+  --color-work: var(--work);
+  --color-work-soft: var(--work-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-done: var(--done);
+  --color-done-soft: var(--done-soft);
+  --color-bubble-me: var(--bubble-me);
+  --color-bubble-me-ink: var(--bubble-me-ink);
+  --color-im-bg: var(--im-bg);
+  --color-im-gray: var(--im-gray);
+  --color-im-gray-ink: var(--im-gray-ink);
+  --color-im-blue: var(--im-blue);
+  --color-im-green: var(--im-green);
+  --color-im-meta: var(--im-meta);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* A live call's pulsing dot */
+@keyframes ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--live) 55%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+.live-dot {
+  animation: ring 1.4s ease-out infinite;
+}
+
+/* Voice bars on the live call card */
+@keyframes bar {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
+}
+.voice-bar {
+  transform-origin: center;
+  animation: bar 1.1s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise {
+  animation: rise 0.28s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot, .voice-bar, .rise { animation: none; }
+}
+
+.scroll-thin { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+/* Message bubbles with the tail on the last bubble of a run */
+.bubble { position: relative; isolation: isolate; }
+.bubble::before, .bubble::after { z-index: -1; }
+.bubble.tail-right::before,
+.bubble.tail-left::before {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  height: 18px;
+  width: 18px;
+  background: inherit;
+}
+.bubble.tail-right::before { right: -6px; border-bottom-left-radius: 14px 12px; }
+.bubble.tail-left::before { left: -6px; border-bottom-right-radius: 14px 12px; }
+.bubble.tail-right::after,
+.bubble.tail-left::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  height: 18px;
+  width: 22px;
+  background: var(--im-bg);
+}
+.bubble.tail-right::after { right: -22px; border-bottom-left-radius: 10px; }
+.bubble.tail-left::after { left: -22px; border-bottom-right-radius: 10px; }
+
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+.typing-dot { animation: typing 1.2s ease-in-out infinite; }
