@@ -9,6 +9,9 @@ import { MockVoice } from "@/server/voice/mock";
 import { pollInbox } from "@/server/inbox";
 import { getMail } from "@/server/mail";
 import { MockMail } from "@/server/mail/mock";
+import { after } from "next/server";
+import { handleInboundText } from "@/server/concierge";
+import { getOwner, getTenancy, getVendor } from "@/server/portfolio";
 
 // Sample mail for the simulated inbox: one Telo just files away, one it offers to call about.
 const EMAILS = {
@@ -29,6 +32,8 @@ const EMAILS = {
 // Demo and development helpers. Disabled with TELO_DEV_TOOLS=false.
 
 const SimCall = z.object({ lines: z.array(z.string().min(1)).min(1).max(12) });
+// A text from someone in the portfolio (tenant, owner, vendor), by party id: the demo's other phones.
+const SimText = z.object({ from: z.string().min(3), text: z.string().max(1000).default(""), photos: z.number().int().min(0).max(4).default(0) });
 
 export async function POST(req: Request, ctx: RouteContext<"/api/dev/[action]">) {
   if (!config.demo.devTools) return new Response("not found", { status: 404 });
@@ -55,6 +60,18 @@ export async function POST(req: Request, ctx: RouteContext<"/api/dev/[action]">)
       const greeting = `Hey ${config.user.name.split(" ")[0]}, it's Telo. What can I do?`;
       const id = await voice.simulateInboundCall(from, parsed.data.lines, [greeting]);
       return Response.json({ ok: true, providerCallId: id });
+    }
+    case "simulate-text": {
+      if (getVoice().name !== "mock") return Response.json({ error: "Only with the simulated phone line" }, { status: 400 });
+      const parsed = SimText.safeParse(await req.json().catch(() => ({})));
+      if (!parsed.success) return Response.json({ error: "from (a party id) and text required" }, { status: 400 });
+      const party = parsed.data.from.startsWith("ten_") ? getTenancy(parsed.data.from) : (getOwner(parsed.data.from) ?? getVendor(parsed.data.from));
+      if (!party) return Response.json({ error: `No party ${parsed.data.from}` }, { status: 404 });
+      const media = Array.from({ length: parsed.data.photos }, (_, i) => `https://demo.telo.local/photos/${parsed.data.from}-${Date.now()}-${i + 1}.jpg`);
+      after(() =>
+        handleInboundText({ from: party.phone, body: parsed.data.text, channel: "sms", providerMessageId: `sim_${Date.now().toString(36)}`, media }).catch((err) => console.error("[dev] simulated text failed", err)),
+      );
+      return Response.json({ ok: true });
     }
     case "check-email": {
       if (!getMail()) return Response.json({ error: "Email isn't connected (npm run google:connect)" }, { status: 400 });

@@ -117,6 +117,7 @@ async function lastKeewanoQuery(userId: string): Promise<StateDTO["lastKeewanoQu
 function messageDTO(m: typeof messages.$inferSelect): MessageDTO {
   return {
     id: m.id,
+    party: m.party ? { role: m.party.role, name: m.party.name } : null,
     direction: m.direction,
     channel: m.channel,
     kind: m.kind,

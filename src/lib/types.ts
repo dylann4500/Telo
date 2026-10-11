@@ -65,6 +65,8 @@ export interface TaskSummaryDTO {
 
 export interface MessageDTO {
   id: string;
+  /** Property management: the tenant, owner or vendor on the other side, when it isn't the manager. */
+  party: { role: string; name: string } | null;
   direction: "in" | "out";
   channel: string;
   kind: string;

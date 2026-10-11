@@ -69,7 +69,7 @@ export function Thread({
   visible.forEach((m, i) => {
     if (m.direction === "out" && m.taskId && waiting.has(m.taskId) && (m.kind === "approval" || m.kind === "question")) lastAsk.set(m.taskId, i);
   });
-  const lastMine = visible.findLastIndex((m) => m.direction === "in" && m.kind !== "call");
+  const lastMine = visible.findLastIndex((m) => m.direction === "in" && m.kind !== "call" && !m.party);
   const thinking = messages.at(-1)?.direction === "in";
   const smsThread = messages.filter((m) => m.direction === "in").at(-1)?.channel === "sms";
 
@@ -119,6 +119,30 @@ export function Thread({
           const endOfRun = !next || next.direction !== m.direction || new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() > 60_000;
           const task = m.taskId ? waiting.get(m.taskId) : undefined;
           const options = task && lastAsk.get(task.id) === i ? task.waiting?.options : undefined;
+
+          if (m.party) {
+            // Telo's side conversations with tenants, owners and vendors, mirrored for the manager.
+            const from = m.direction === "in";
+            return (
+              <Fragment key={m.id}>
+                {showDivider && <Divider text={divider(m.createdAt)} sub={CHANNEL_LABEL[m.channel]} />}
+                <div className="rise mb-2 flex justify-start">
+                  <div className="max-w-[85%]">
+                    <p className="mb-0.5 pl-2 text-[11px] text-im-meta">{from ? `${m.party.name} · ${m.party.role}` : `Telo to ${m.party.name} · ${m.party.role}`}</p>
+                    <div
+                      className={clsx(
+                        "whitespace-pre-wrap rounded-[18px] border px-3 py-[7px] text-[14px] leading-[1.3] text-im-gray-ink",
+                        from ? "border-im-blue/30 bg-im-blue/10" : "border-black/5 bg-im-gray/70 dark:border-white/10",
+                      )}
+                    >
+                      {m.body}
+                    </div>
+                    {m.status === "failed" && <p className="mt-0.5 pl-2 text-[11px] text-bad">Not delivered{m.error ? `: ${m.error}` : ""}</p>}
+                  </div>
+                </div>
+              </Fragment>
+            );
+          }
 
           if (m.kind === "email") {
             // What Telo noticed in the inbox: a quiet note, not a text.
