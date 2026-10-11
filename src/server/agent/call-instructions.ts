@@ -27,8 +27,10 @@ function unique(items: string[], max: number): string[] {
 }
 
 const HOW_TO_TALK = [
-  "This is a live phone call. Say one or two short sentences, then stop and let them talk.",
-  "Ask for one thing at a time. Never read out numbered lists or several requests at once.",
+  "When the call connects, wait for them to say hello first. If nobody speaks for a few seconds, say hello.",
+  "This is a live phone call. Never say more than two sentences in a row, then stop and let them talk.",
+  "Ask exactly one question per turn. Never read out numbered lists or several requests at once.",
+  "Don't recap the history unless they ask or it's needed to explain why you're calling; one sentence is enough.",
   "Follow their lead. If they decline or say later to anything that isn't the goal, accept it and move on.",
   "As soon as the goal is done and you have a confirmation or reference number, repeat it back, thank them and end the call.",
 ];
@@ -76,6 +78,7 @@ export function renderCallInstructions(input: {
     `## Get before you hang up\n${bullets(unique(["A confirmation or reference number, if one exists", ...leg.collect], 4))}`,
     `## If you get stuck\n${leg.fallback}`,
     "If you reach voicemail, leave no message and hang up.",
+    "Remember: two sentences at most, then let them talk.",
   ];
 
   return {
