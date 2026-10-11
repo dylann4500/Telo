@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, like } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, like, sql } from "drizzle-orm";
 import * as agent from "./agent";
 import type { TriageResult } from "./agent/schemas";
 import { config } from "./config";
@@ -14,7 +14,7 @@ import { advance, callbackTime, finalizeTask, kick, scheduleWorkOrder } from "./
 import { assetFor, assetLabel, FIRM, getAsset, getOwner, getProperty, getTenancy, getUnit, getVendor, homeOf, isFictional, partyByName, vendorByName, type Party } from "./portfolio";
 import { assetHistory, rankVendors, shouldQuoteReplacement, type Scorecard } from "./portfolio/insights";
 import { containsSecret, maskSecrets } from "./redact";
-import { callIsLive, getTask, getUser, listActiveTasks, listCalls, patchTask, transitionTask } from "./tasks/repo";
+import { callIsLive, getCall, getTask, getUser, listActiveTasks, listCalls, patchTask, transitionTask } from "./tasks/repo";
 import { clampToCallingHours, formatWhen, nowContext, windowLabel, withinCallingHours } from "./time";
 import { getVoice } from "./voice";
 
@@ -212,7 +212,10 @@ export async function partySays(party: Party, call: Pick<CallRow, "id" | "taskId
   return capture.lines.join(" ") || "Thanks, I've passed that on to the team.";
 }
 
-/** Telo's call with a tenant or owner ended. If their answer never came through ask_telo, what they said is used now. */
+const VOICEMAIL = /leave (a|your) message|voicemail|not available|after the (tone|beep)|record your message|mailbox/i;
+
+/** Telo's call with a tenant or owner ended. If their answer never came through ask_telo, what they said is used now;
+ * if it reached voicemail (or nobody), Telo tries once more a little later. */
 export async function partyCallFinished(call: CallRow): Promise<void> {
   const party = partyByName(call.targetName);
   if (!party || (party.role !== "tenant" && party.role !== "owner")) return;
@@ -225,8 +228,51 @@ export async function partyCallFinished(call: CallRow): Promise<void> {
     .join(" ")
     .replace(/^(hello|hi|hey)\b[?.!,]*\s*/i, "")
     .trim();
-  if (!said || /leave (a|your) message|voicemail|not available|after the (tone|beep)/i.test(said)) return;
+  if (!said || VOICEMAIL.test(said)) {
+    if (call.attempt < 2) setTimeout(() => void retryPartyCall(call.id).catch((err) => console.error("[maintenance] couldn't call again", err)), config.parties.retrySeconds * 1000);
+    return;
+  }
   await handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${call.id}:end`, onCall: call.taskId });
+}
+
+/** The same message to the same tenant or owner, on a new call: unless they've answered since (a text, or another call). */
+export async function retryPartyCall(callId: string): Promise<string | null> {
+  const prev = await getCall(callId);
+  const party = prev?.kind === "party_update" ? partyByName(prev.targetName) : null;
+  if (!prev || !party || !prev.targetPhone) return null;
+  const since = prev.createdAt;
+  const answered = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.direction, "in"), sql`json_extract(${messages.party}, '$.id') = ${party.id}`, gte(messages.createdAt, since)))
+    .limit(1);
+  if (answered.length) return null;
+  for (let i = 0; i < 100 && (await phoneBusy(prev.targetPhone)); i++) await sleep(getVoice().name === "mock" ? 100 : 3000);
+  const id = newId("call");
+  await db.insert(calls).values({
+    id,
+    userId: prev.userId,
+    taskId: prev.taskId,
+    direction: "outbound",
+    kind: "party_update",
+    seq: prev.seq,
+    attempt: prev.attempt + 1,
+    targetName: prev.targetName,
+    targetPhone: prev.targetPhone,
+    purpose: prev.purpose,
+    instructions: prev.instructions,
+    status: "queued",
+    provider: getVoice().name,
+    startedAt: new Date(),
+  });
+  try {
+    const res = await getVoice().placeCall({ callId: id, to: prev.targetPhone, instructions: prev.instructions ?? "", idempotencyKey: `telo:${id}` });
+    await db.update(calls).set({ providerCallId: res.providerCallId }).where(eq(calls.id, id));
+    return id;
+  } catch (err) {
+    await db.update(calls).set({ status: "failed", endReason: "failed_to_place", statusDetail: (err as Error).message.slice(0, 200), endedAt: new Date(), finishedAt: new Date() }).where(eq(calls.id, id));
+    throw err;
+  }
 }
 
 async function storeInbound(party: Party, body: string, channel: string, providerMessageId: string | null, taskId: string | null): Promise<string | null> {

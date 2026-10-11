@@ -21,6 +21,7 @@ process.env.TELO_USER_NAME = "Dylan";
 process.env.TELO_LIVE_POLL_SECONDS = "1";
 process.env.TELO_LIVE_WAIT_SECONDS = "10";
 process.env.TELO_PARTY_CALLS = "1";
+process.env.TELO_PARTY_RETRY_SECONDS = "0";
 delete process.env.TELO_PORTFOLIO_PHONES;
 delete process.env.DEMO_TARGET_PHONE;
 delete process.env.TELO_USER_PHONE;
@@ -100,6 +101,29 @@ describe("Telo calls the tenant and the owner", () => {
     msgs = await m.db.db.select().from(m.schema.messages).where(eq(m.schema.messages.taskId, task.id));
     expect(msgs.find((x) => x.party?.id === "ten_alder_b" && /Reply Y or N/.test(x.body))?.channel).toBe("voice");
   }, 60_000);
+
+  it("tries again when the call goes to voicemail", async () => {
+    const { partyCallFinished } = await import("../src/server/maintenance");
+    await m.db.db.insert(m.schema.calls).values({
+      id: "call_vm_test",
+      userId: "usr_default",
+      taskId: null,
+      direction: "outbound",
+      kind: "party_update",
+      seq: -7,
+      attempt: 1,
+      targetName: "Ben Carter",
+      targetPhone: "+14155550128",
+      purpose: "Message for Ben",
+      instructions: "You are making a phone call to Ben Carter on behalf of Bayside Property Management.",
+      status: "ended",
+      transcript: [{ speaker: "other", text: "Your call has been forwarded to voicemail. At the tone, please record your message.", at: new Date().toISOString() }],
+      finishedAt: new Date(),
+    });
+    await partyCallFinished((await m.repo.getCall("call_vm_test"))!);
+    const again = await waitFor(async () => (await m.db.db.select().from(m.schema.calls).where(eq(m.schema.calls.targetName, "Ben Carter"))).find((c) => c.attempt === 2), "the second try");
+    expect(again).toMatchObject({ kind: "party_update", targetPhone: "+14155550128", seq: -7 });
+  }, 30_000);
 
   it("calls a tenant with safety steps, and their answer doesn't open another job", async () => {
     await m.concierge.handleInboundText({ from: "+14155550123", body: "I smell gas in the kitchen, it's strong", channel: "sms", providerMessageId: "pc_gas", media: [] });

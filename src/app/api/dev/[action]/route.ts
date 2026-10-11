@@ -46,6 +46,17 @@ export async function POST(req: Request, ctx: RouteContext<"/api/dev/[action]">)
       await syncPendingEvents(200);
       return Response.json({ ok: true, ...r });
     }
+    case "call-party-again": {
+      // The last call to a tenant or owner, placed again (it went to voicemail, or they missed it).
+      const { db } = await import("@/server/db/client");
+      const { calls } = await import("@/server/db/schema");
+      const { desc, eq } = await import("drizzle-orm");
+      const { retryPartyCall } = await import("@/server/maintenance");
+      const [last] = await db.select().from(calls).where(eq(calls.kind, "party_update")).orderBy(desc(calls.createdAt)).limit(1);
+      if (!last) return Response.json({ error: "No call to a tenant or owner yet" }, { status: 404 });
+      const callId = await retryPartyCall(last.id);
+      return Response.json({ ok: Boolean(callId), callId, to: last.targetName, note: callId ? undefined : "They've answered since, so no new call" });
+    }
     case "reset": {
       await resetAll();
       await seedBaseline();

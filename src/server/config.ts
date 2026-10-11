@@ -106,6 +106,8 @@ export const config = {
     // Telo phones tenants and owners for what needs their answer (an approval, an entry notice, "fixed?",
     // safety steps) instead of texting: for when texts can't get through (10DLC) or a party prefers calls.
     calls: ["1", "true", "on", "yes"].includes((env("TELO_PARTY_CALLS") ?? "").toLowerCase()),
+    // A call that reaches voicemail (or nobody) is tried once more after this long.
+    retrySeconds: Number(env("TELO_PARTY_RETRY_SECONDS") ?? "60"),
   },
 
   calls: {
