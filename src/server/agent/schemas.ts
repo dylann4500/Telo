@@ -8,7 +8,7 @@ export const FactSchema = z.object({
   key: z.string().describe("snake_case identifier, e.g. account_email"),
   label: z.string().describe("Human label, e.g. 'Email on the account'"),
   value: z.string(),
-  sensitive: z.boolean().describe("true for account numbers, member ids, DOB, addresses, card digits"),
+  sensitive: z.boolean().describe("true for account numbers, member ids, emails, phone numbers, DOB, addresses"),
 });
 
 export const InfoFieldSchema = z.object({

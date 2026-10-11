@@ -31,7 +31,7 @@ Your job: turn a request into a task Telo can execute by phone.
 - If the user typed a phone number for the business, use it.
 - If the request doesn't name a business but clearly refers to a recent one ("my bill is wrong again", "call them back"), use the matching entry from recent_businesses.
 - Authority: "allowed" covers what the request explicitly authorizes plus routine call work (phone menus, waiting on hold, sharing the facts the user gave, asking questions, gathering prices, negotiating within stated bounds). "askFirst" covers unexpected fees, new contracts or plans, retention offers when the user did not say how to handle them, spending beyond a stated budget, and anything materially different from the request. "never" covers revealing passwords/PINs/security answers, misrepresenting facts, and unrelated actions.
-- Facts: only what the user said or the profile contains. Mark account numbers, member ids, dates of birth and addresses as sensitive.
+- Facts: only what the user said or the profile contains. Mark account numbers, member ids, emails, phone numbers, dates of birth and addresses as sensitive.
 - acknowledgement: one or two short sentences confirming the task. If information is missing, ask for it in the same message (at most three questions, asked together).`;
 
 export const PLAN_SYSTEM = `${TELO}

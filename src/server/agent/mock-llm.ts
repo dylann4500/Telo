@@ -166,12 +166,12 @@ export class MockLLM implements LLM {
     const name = targets[0]?.name ?? null;
     const missing: unknown[] = [];
     const facts: unknown[] = [];
-    if (email) facts.push({ key: "account_email", label: "Email on the account", value: email, sensitive: false });
+    if (email) facts.push({ key: "account_email", label: "Email on the account", value: email, sensitive: true });
     if (!targets.length && !typedPhone) {
       missing.push({ key: "business", label: "Business", question: "Which business should I call, and what's their number?", sensitive: false, required: true });
     }
     if (category === "membership" && !email) {
-      missing.push({ key: "account_email", label: "Email on the account", question: "What's the email on the membership?", sensitive: false, required: true });
+      missing.push({ key: "account_email", label: "Email on the account", question: "What's the email on the membership?", sensitive: true, required: true });
     }
     if (category === "reservation" && !/\b\d{1,2}(:\d{2})?\s*(am|pm)?\b|tonight|tomorrow|morning|afternoon|evening/i.test(request)) {
       missing.push({ key: "time", label: "Preferred time", question: "What day and time works?", sensitive: false, required: true });
@@ -373,10 +373,12 @@ export class MockLLM implements LLM {
 
   private brief(b: Blocks) {
     const events = (b.history_events as { id: string; summary: string; occurredAt: string; type: string }[]) ?? [];
-    const relevant = events.filter((e) => /commitment|confirmation|offer|promise|completed|fact/.test(e.type));
+    // Promises, offers and their fate are what the next call needs.
+    const relevant = events.filter((e) => /^(commitment|offer)\./.test(e.type));
     if (!relevant.length) return { summary: "", relevantEventIds: [] };
+    const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric" });
     return {
-      summary: relevant.map((e) => `On ${new Date(e.occurredAt).toDateString().slice(4)}: ${e.summary}`).join(" "),
+      summary: relevant.map((e) => `On ${day(e.occurredAt)}, ${e.summary.replace(/^(\w+) promised: /, "$1 promised ")}.`).join(" "),
       relevantEventIds: relevant.map((e) => e.id),
     };
   }
