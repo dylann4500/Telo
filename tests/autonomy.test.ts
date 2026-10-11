@@ -61,6 +61,11 @@ const BUSINESSES: { name: string; phone: string; calls: (SimTurn[] | "no_answer"
     ],
   },
   {
+    name: "Lumen Energy",
+    phone: "+14155550112",
+    calls: [[hello, other("Lumen Energy, how can I help?")]],
+  },
+  {
     name: "Pacific Gas",
     phone: "+14155550104",
     calls: [[hello, other("I'm sorry, for privacy I can only speak with the account holder. The account holder has to call us directly."), agentSays("Understood, thank you.")]],
@@ -220,6 +225,34 @@ describe("the user answers before the business is open", () => {
     const done = await status(task.id, "completed");
     expect(done.result?.confirmation).toBe("CB4120");
     expect((await businessCalls(task.id)).at(-1)?.instructions).toContain("88213");
+  });
+});
+
+describe("Telo's own calling account is out of credit", () => {
+  it("says what to fix instead of blaming the business, and doesn't schedule a retry", async () => {
+    const { setVoiceForTests } = await import("../src/server/voice");
+    setVoiceForTests({
+      name: "dial",
+      placeCall: async () => {
+        throw new Error('Dial API error 402: {"error":"Insufficient Dial credit. Add credit or start a subscription to continue."}');
+      },
+      getCall: async () => {
+        throw new Error("not used");
+      },
+      stopCall: async () => {},
+      sendMessage: async () => ({ providerMessageId: null }),
+      setInboundInstruction: async () => {},
+    });
+    try {
+      await say("Ask Lumen Energy why my bill went up");
+      const task = await latest();
+      const failed = await status(task.id, "failed");
+      expect(failed.wakeAt).toBeNull();
+      expect((await businessCalls(task.id)).map((c) => c.endReason)).toEqual(["account_error"]);
+      expect(await lastMessage(task.id)).toMatch(/out of credit/);
+    } finally {
+      setVoiceForTests(undefined);
+    }
   });
 });
 

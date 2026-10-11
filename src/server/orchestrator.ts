@@ -516,10 +516,11 @@ async function placeOne(task: TaskRow, user: UserRow, call: CallRow): Promise<bo
   });
   await db.update(calls).set({ instructions: rendered.instructions }).where(eq(calls.id, call.id));
 
-  const fail = async (reason: string) => {
+  // account_error: Telo's own Dial account refused (no credit, bad key). Retrying won't help.
+  const fail = async (reason: string, endReason: "failed_to_place" | "account_error" = "failed_to_place") => {
     await db
       .update(calls)
-      .set({ status: "failed", endReason: "failed_to_place", statusDetail: reason.slice(0, 200), endedAt: new Date(), finishedAt: new Date() })
+      .set({ status: "failed", endReason, statusDetail: reason.slice(0, 200), endedAt: new Date(), finishedAt: new Date() })
       .where(eq(calls.id, call.id));
     await recordEvent({
       userId: task.userId,
@@ -558,7 +559,8 @@ async function placeOne(task: TaskRow, user: UserRow, call: CallRow): Promise<bo
     return true;
   } catch (err) {
     const parsed = parseDialError(err);
-    await fail(parsed ? `${parsed.code ?? parsed.status}: ${parsed.message}` : (err as Error).message);
+    const account = parsed != null && ([401, 402, 403].includes(parsed.status) || /credit|balance|subscription/i.test(parsed.message));
+    await fail(parsed ? `${parsed.code ?? parsed.status}: ${parsed.message}` : (err as Error).message, account ? "account_error" : "failed_to_place");
     return false;
   }
 }
@@ -624,6 +626,18 @@ async function review(task: TaskRow): Promise<boolean> {
   const business = all.filter((c) => c.kind === "business");
   const remaining = business.filter((c) => c.status === "planned");
   const mails = await db.select().from(emails).where(eq(emails.taskId, task.id)).orderBy(asc(emails.receivedAt));
+  // Telo's own calling account refused the call: say what to fix instead of blaming the business.
+  const latest = business.filter((c) => c.status !== "planned").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).at(-1);
+  if (latest?.endReason === "account_error") {
+    const credit = /credit|balance|subscription|402/i.test(latest.statusDetail ?? "");
+    const problem = credit ? "my calling account (Dial) is out of credit" : "my calling account (Dial) rejected the call";
+    return finalize(
+      task.id,
+      "failed",
+      { outcome: "failed", summary: `Couldn't place the call: ${problem}.`, confirmation: null },
+      `I couldn't call ${latest.targetName}: ${problem}. ${credit ? "Add credit" : "Check the Dial key"}, then text me "try again".`,
+    );
+  }
   const d = await agent.decideNext({
     now: now(user),
     task: { title: fresh.title, goal: fresh.goal, request: fresh.request, category: fresh.category },
