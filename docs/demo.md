@@ -1,6 +1,6 @@
 # Demo script
 
-About five minutes. Telo is the AI that works the phones for a small rental property manager. A tenant reports a broken AC. Telo calls two HVAC companies at once, chosen by what Keewano remembers. It gets the owner's OK by text while a vendor holds, books the tenant's window with the entry notice, follows up until it's fixed, and answers a judge's question from Keewano with live SQL.
+About seven minutes. Telo is the AI that works the phones for a small rental property manager. A tenant reports a broken AC. Telo calls the HVAC companies Keewano ranks first, gets the owner's OK while a vendor holds, books the tenant's window with the entry notice, follows up until it's fixed, schedules its own callbacks when a vendor says "call us back in three days", and answers a judge's question from Keewano with live SQL.
 
 ## The cast
 
@@ -11,6 +11,8 @@ About five minutes. Telo is the AI that works the phones for a small rental prop
 | Owner | Teammate 2 | Priya Shah, approval limit $500 (`own_shah`) |
 | HVAC vendor A | Teammate 3 | Summit Mechanical (`ven_summit`) |
 | HVAC vendor B | Teammate 4 | Rapid Air Heating & Cooling (`ven_rapidair`) |
+
+With three phones, one teammate answers for every vendor (Summit, then Rapid Air, then Handy Hank): two vendors on the same phone are called one at a time. The owner's approval is then the dashboard's **Priya (owner)** button.
 
 The seeded portfolio (`src/server/portfolio/data.ts`) has two owners, three properties, eight units with their appliances, eight tenancies, eight vendors, a warranty company and a utility. Its numbers are fictional 555-01xx numbers; point the cast at real phones with `TELO_PORTFOLIO_PHONES`.
 
@@ -23,7 +25,9 @@ The seeded portfolio (`src/server/portfolio/data.ts`) has two owners, three prop
 - [ ] Dial credit topped up. Two vendor calls run at once, and a free account allows only two. A call costs about $0.22 a minute.
 - [ ] The portfolio's history is in Keewano at least 30 minutes before going on: `npm run seed:portfolio` (safe to run twice). It was loaded at 12:46 PM on demo day and checked queryable by 1:05.
 - [ ] `npm run keewano:check` shows the HVAC ranking "from keewano" (CoolBreeze last, with 2 no-shows) and Unit B's two AC repairs.
-- [ ] Updates on **Text + call** in the thread header. Until the number's 10DLC registration clears, Telo's texts to US phones may be blocked, so test texting to each cast phone first. Every message also shows on the dashboard.
+- [ ] `TELO_PARTY_CALLS=1`: until the number's 10DLC registration clears, carriers reject Telo's texts to US phones, so Telo calls the tenant and owner for what needs their answer (the entry notice, "fixed?", the owner's approval, safety steps). Texts *to* Telo work. Every message also shows on the dashboard.
+- [ ] Save +1 (712) 530-5671 as a contact named **Telo** on every cast phone. A phone on Do Not Disturb or silencing unknown callers sends Telo straight to voicemail (Telo tries once more a minute later).
+- [ ] Updates on **Text + call** in the thread header, so Telo phones the presenter with the booking and the close.
 - [ ] A quiet room for the vendor teammates (Dial's agent stops talking at background noise).
 
 ## 1. A tenant calls or texts (7 PM)
@@ -38,7 +42,7 @@ Maria calls Telo's number: **"The AC is out again. It's blowing warm air and it'
 
 On the work order's page, the **flowchart** shows each step as it happens (report, triage, Keewano, the calls side by side, owner approval, booking, entry notice, follow-up, close). **What Telo remembered** shows the decision and the live Keewano queries behind it, with rows and milliseconds:
 
-- This is Unit B's **third AC failure since June** ($550 in repairs; the AC is 15 years old). So Telo also asks for a **replacement price**.
+- This is Unit B's **fourth AC failure since June** ($1,200 in repairs; the AC is 15 years old). So Telo also asks for a **replacement price**. Every rehearsal that closes adds a repair: Keewano keeps everything, so check the count before going on.
 - **CoolBreeze HVAC**, the usual vendor, **no-showed twice**. So Telo calls Summit Mechanical and Rapid Air instead.
 
 ## 3. Two calls at once
@@ -59,27 +63,37 @@ $650 is over Priya's $500 limit. Telo tells Luis "One moment, I'm checking with 
 
 ## 5. Booked: the window, the notice, a polite no
 
-- **Maria** gets the window and the **entry notice**. It's under 24 hours away, so Telo asks her to reply YES (California needs 24 hours' written notice unless the tenant agrees). She replies **"Yes."**
+- **Maria's phone rings**: Telo gives her the window and the **entry notice**. It's under 24 hours away, so Telo asks if it's OK for them to come in (California needs 24 hours' written notice unless the tenant agrees). She says **"Yes, that works for me."**
 - **Summit** gets a polite "we've booked another company this time."
 - **Priya** and **the manager** each get one booking update.
 
 ## 6. Follow-up closes the loop
 
-Thirty minutes into the window, Telo texts Rapid Air "is your tech on the way?" and Maria "did they fix it? Reply Y or N". On stage, press **Check now** on the work order to skip the wait.
+Thirty minutes into the window, Telo asks Rapid Air "is your tech on the way?" and calls Maria: "did they fix it?" On stage, press **Check now** on the work order to skip the wait.
 
-- Maria replies **"Y"**. Telo marks Rapid Air's arrival promise **kept** and closes the work order: fixed on the first visit, confirmed by the tenant, and **zero manager touches**. The dashboard's **Manager touches per job** tile shows it: 6.6 for the seeded jobs from before Telo (2.6 days to fix), 0 with Telo.
+- Maria says **"Yes, it's fixed."** Telo marks Rapid Air's arrival promise **kept** and closes the work order: fixed on the first visit, confirmed by the tenant, and **zero manager touches**. The dashboard's **Manager touches per job** tile shows it: 6.6 for the seeded jobs from before Telo (2.6 days to fix), 0 with Telo.
 
 ## 7. A judge asks anything
 
-The presenter texts Telo the judge's own question. These are answered from Keewano with live SQL, and the dashboard's **Asked Keewano** card shows the SQL Claude wrote:
+The presenter calls Telo from their phone and asks the judge's own question; Telo answers out loud. These are answered from Keewano with live SQL (about a second), and the dashboard's **Asked Keewano** card shows the SQL Claude wrote:
 
-| Question | Answer from the seeded history |
+| Question | Answer (checked live on demo day) |
 |---|---|
 | "Which vendor no-shows most?" | CoolBreeze HVAC, 2 no-shows |
-| "What does a water-heater replacement usually cost us?" | About $1,788, between $1,725 and $1,850 |
-| "Which unit cost the most in repairs this year?" | 22 Linden Ct, about $3,030 |
-| "How long do owners take to approve?" | Priya about 4 minutes (by text); Marcus about 25 (by phone) |
-| "How many trips were wasted because nobody let the vendor in?" | 2 |
+| "How many times has the AC at Alder Street Unit B been repaired?" | Every repair on record, counting tonight's: 3 and $1,200 before the demo run, 4 and $1,850 after it. Telo adds its own newest writes until Keewano shows them, without counting anything twice |
+| "What does a water-heater replacement usually cost us?" | About $1,788 (2 on record) |
+
+Re-seeding on demo day stored some seeded events in Keewano a second and third time, so repair totals by unit, wasted trips, owner approval times and visit counts read high. Use the questions above unless the history is loaded once into a fresh Keewano project.
+
+## 8. Telo follows up on its own
+
+After the AC job closes, Maria texts **"The kitchen cabinet door is hanging off its hinge. Not urgent, whenever someone can come."** It's routine general work, so Telo calls Handy Hank's Home Repair (the only handyman).
+
+- Hank: **"We're booked solid this week. Call us back in three days and I'll have openings."** The board shows the callback scheduled three days out, and Telo tells the manager it will call Hank then.
+- Press **Check now** to jump to that day. Hank: **"Still slammed, sorry. Try us again in four days."** Telo schedules itself again ("the second time they've asked").
+- Optional: **Check now** once more. Hank: **"Good news, we had a cancellation. You're booked for tomorrow at 2 PM. It's $120 plus our trip fee."** Booked, and Maria's phone rings with the entry notice.
+
+An urgent job doesn't wait: when a vendor's callback is more than a day out, Telo calls the next vendor in Keewano's ranking now. When nobody answers, it calls the next one too, and a tenant saying "nobody came" puts a no-show on that vendor's record.
 
 ## Backup scene: an emergency
 
