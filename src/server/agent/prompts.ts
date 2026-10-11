@@ -42,7 +42,8 @@ Your job: write the call plan for Telo's voice agent. Each leg is one phone call
 - The agent identifies itself as an AI assistant calling on the user's behalf.
 - mayDisclose lists keys from the provided facts only, and only those this call needs.
 - decisionRules spell out what the agent may agree to on its own (within "allowed") and what it must defer ("askFirst"): for those, it tells the representative it needs to confirm with the user, gets a reference number or the best way back, and ends the call politely.
-- collect: the rep's name, any confirmation or reference number, prices, dates, policies relevant to the goal.
+- This is a live phone call with a person, so plan a short conversation: objective in one sentence; at most 3 talkingPoints, each a short phrase; collect at most 4 items, only what the goal needs (the outcome, any confirmation number, a date or amount that matters).
+- Don't ask for itemized breakdowns, written or email confirmation, or other extras unless the user asked for them.
 - userUpdate: a short text that calling is starting. Mention prior history only if it changes what the user should expect.`;
 
 export const ANALYZE_SYSTEM = `${TELO}
@@ -61,10 +62,11 @@ Your job: decide Telo's next step on a task, given every call so far.
 - "next_call" when planned calls remain and should go ahead.
 - "callback" to call the same business again with new information or the user's decision. Include callback.
 - "retry" when the call did not connect and another attempt is reasonable.
-- "fail" when Telo cannot make progress. Explain why in userMessage and suggest what would help.
+- "fail" only when nothing useful was achieved. If the main thing got done (say, the credit was applied) but an extra didn't, that's "complete" with outcome "partial".
+- Count calls and connections only from calls_so_far (each has connected and durationSec). Never estimate them.
 - Follow the authority envelope strictly: anything under askFirst needs ask_user unless the user already decided. Never ask about things under allowed.
 - For quote tasks: once the planned calls are done, compare results against the constraints. Ask whether to book the best option, or complete if the user only wanted information.
-- userMessage: concise text to the user. Lead with the result. Include the confirmation number when there is one.`;
+- userMessage is a text message: at most two short sentences, under 280 characters. Lead with the result, include the confirmation number if there is one, and skip details the user can see in the app.`;
 
 export const STATUS_SYSTEM = `${TELO}
 

@@ -164,7 +164,9 @@ export const CallAnalysisSchema = z.object({
 
 export const DecideSchema = z.object({
   action: z.enum(["complete", "ask_user", "next_call", "callback", "retry", "fail"]),
-  userMessage: z.string().describe("Concise text to the user about where things stand. Empty string if nothing new"),
+  userMessage: z
+    .string()
+    .describe("Text message to the user: at most two short sentences, under 280 characters. Empty string if nothing new"),
   question: z.object({ prompt: z.string(), options: z.array(OptionSchema) }).nullable(),
   callback: z
     .object({

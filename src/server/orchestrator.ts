@@ -555,7 +555,16 @@ async function review(task: TaskRow): Promise<boolean> {
     authority: fresh.authority,
     calls: business
       .filter((c) => c.analysis)
-      .map((c) => ({ id: c.id, target: c.targetName, purpose: c.purpose, attempt: c.attempt, status: c.status, analysis: c.analysis })),
+      .map((c) => ({
+        id: c.id,
+        target: c.targetName,
+        purpose: c.purpose,
+        attempt: c.attempt,
+        status: c.status,
+        connected: Boolean(c.answeredAt) && c.transcript.some((t) => t.speaker === "other"),
+        durationSec: c.durationSec,
+        analysis: c.analysis,
+      })),
     remainingLegs: remaining.map((c) => ({ target: c.targetName, purpose: c.purpose })),
     maxAttemptsPerLeg: config.calls.maxAttemptsPerLeg,
     latestDecision: fresh.followUp?.userDecision ?? null,
@@ -565,9 +574,12 @@ async function review(task: TaskRow): Promise<boolean> {
   }
   const lastCall = business.filter((c) => c.analysis).at(-1);
 
+  const latestConfirmation = business.filter((c) => c.analysis?.confirmationNumbers.length).at(-1)?.analysis?.confirmationNumbers.at(-1) ?? null;
   switch (d.action) {
-    case "complete":
-      return finalize(task.id, "completed", d.result ?? { outcome: "success", summary: d.userMessage, confirmation: lastCall?.analysis?.confirmationNumbers[0] ?? null }, d.userMessage);
+    case "complete": {
+      const result = d.result ?? { outcome: "success" as const, summary: d.userMessage, confirmation: null };
+      return finalize(task.id, "completed", { ...result, confirmation: result.confirmation ?? latestConfirmation }, d.userMessage);
+    }
     case "fail":
       return finalize(task.id, "failed", d.result ?? { outcome: "failed", summary: d.userMessage, confirmation: null }, d.userMessage);
     case "ask_user": {

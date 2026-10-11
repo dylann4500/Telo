@@ -138,7 +138,16 @@ export function decideNext(input: {
   task: { title: string; goal: string | null; request: string; category: string | null };
   constraints: string[];
   authority: Authority | null;
-  calls: { id: string; target: string; purpose: string; attempt: number; status: string; analysis: CallAnalysis | null }[];
+  calls: {
+    id: string;
+    target: string;
+    purpose: string;
+    attempt: number;
+    status: string;
+    connected: boolean;
+    durationSec: number | null;
+    analysis: CallAnalysis | null;
+  }[];
   remainingLegs: { target: string; purpose: string }[];
   maxAttemptsPerLeg: number;
   latestDecision: string | null;
