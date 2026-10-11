@@ -326,9 +326,19 @@ export class KeewanoMemory implements MemoryProvider {
     if (!/^[0-9a-f-]{36}$/.test(uuid)) throw new Error("bad entity id");
     const since = query.since ? ` AND event_datetime >= '${new Date(query.since).toISOString()}'` : "";
     const statements = COLUMNS.map(
-      (col) => `SELECT event_datetime AS t, ${col} AS v FROM events WHERE user_id = '${uuid}'${since} ORDER BY event_datetime`,
+      (col) => `SELECT event_datetime AS t, ${col} AS v FROM events WHERE user_id = '${uuid}'${since} ORDER BY t`,
     );
-    const results = await Promise.all(statements.map((s) => this.sql(s).catch(() => [] as Record<string, unknown>[])));
+    const errors: string[] = [];
+    const results = await Promise.all(
+      statements.map((s) =>
+        this.sql(s).catch((err: Error) => {
+          errors.push(err.message);
+          return [] as Record<string, unknown>[];
+        }),
+      ),
+    );
+    if (errors.length === statements.length) throw new Error(`Keewano SQL failed: ${errors[0]}`);
+    if (errors.length) console.warn(`[keewano] ${errors.length}/${statements.length} column queries failed, e.g. ${errors[0]}`);
 
     // Rebuild: group values by second; each anchor becomes one event, with
     // the context values that share its second.

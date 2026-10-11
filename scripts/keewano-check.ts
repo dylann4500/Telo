@@ -40,7 +40,7 @@ async function main() {
   console.log(`● Entities  ${JSON.stringify(kinds)}`);
   const userId = "usr_default";
   const rel = entityUuid({ type: "relationship", id: `${userId}:comcast` });
-  const commitments = await memory.sql(`SELECT event_datetime AS t, commitment_received AS kind FROM events WHERE user_id = '${rel}' ORDER BY event_datetime`).catch((e) => [{ error: (e as Error).message }]);
+  const commitments = await memory.sql(`SELECT event_datetime AS t, commitment_received AS kind FROM events WHERE user_id = '${rel}' ORDER BY t`).catch((e) => [{ error: (e as Error).message }]);
   console.log(`● Comcast   commitments on the demo relationship: ${JSON.stringify(commitments)}`);
   console.log("\nKeewano is wired up. Seed the demo history (dashboard > Demo controls) at least 5 minutes before you present.");
 }
