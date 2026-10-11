@@ -3,7 +3,7 @@
 Telo is a hackathon app (SpeedHacks, Oct 11 2026): the AI that works the phones for small rental property managers. Tenants call or text it, it calls vendors in parallel, gets the owner's OK while a vendor holds, books the tenant's window with the entry notice and follows up, on Dial voice calls, Claude reasoning and Keewano event memory. Read README.md first; developer notes are in docs/architecture.md; the product brief and research are in docs/property-management/; sponsor API facts are in docs/integrations/.
 
 - Next.js 16.4 with Cache Components on. Read node_modules/next/dist/docs/ before using an API you haven't checked (see AGENTS.md).
-- Run with `npm run dev` (port 3210). Test with `npm test` (vitest; end-to-end on the simulated stack). Typecheck with `npm run typecheck`.
+- Run with `npm run dev` (port 3210). Test with `npm test` (vitest; end-to-end on the simulated stack). Typecheck with `npm run typecheck`. After `npm run build`, delete `.next` before `npm run dev`: the production output sends the dev server into a page-reload loop.
 - With no keys, everything runs on simulations: the rule-based stand-in in `src/server/agent/mock-llm.ts`, the simulated phone line in `src/server/voice/mock.ts` with scripts in `mock-scenarios.ts`, and the local memory provider. Keep the demo scenarios working on it.
 - Every task state change goes through `transitionTask` (compare-and-swap). Never update `tasks.status` directly.
 - Only typed, low-cardinality values go to Keewano (no names, transcripts or free text). It has no delete API.
