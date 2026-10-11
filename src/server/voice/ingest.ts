@@ -44,10 +44,22 @@ export async function ingestVoiceEvent(e: VoiceEvent): Promise<void> {
     }
     case "message.status": {
       const failed = e.deliveryState === "failed" || e.deliveryState === "undelivered";
-      await db
+      if (!failed) {
+        if (e.deliveryState === "delivered") await db.update(messages).set({ status: "delivered" }).where(eq(messages.providerMessageId, e.providerMessageId));
+        return;
+      }
+      const rows = await db
         .update(messages)
-        .set(failed ? { status: "failed", error: e.error ?? "undelivered" } : e.deliveryState === "delivered" ? { status: "delivered" } : {})
-        .where(eq(messages.providerMessageId, e.providerMessageId));
+        .set({ status: "failed", error: e.error ?? "undelivered" })
+        .where(eq(messages.providerMessageId, e.providerMessageId))
+        .returning();
+      // A text that couldn't be delivered (e.g. carriers blocking an
+      // unregistered number) but needs the user: call them instead.
+      const msg = rows[0];
+      if (msg && ["approval", "question", "result", "failure"].includes(msg.kind)) {
+        const { notify } = await import("../notify");
+        await notify({ userId: msg.userId, taskId: msg.taskId, kind: msg.kind as "approval", body: msg.body, channel: "voice", dedupeKey: `voice-fallback:${msg.id}` });
+      }
       return;
     }
   }
