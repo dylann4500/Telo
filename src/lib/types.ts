@@ -114,6 +114,7 @@ export interface StateDTO {
   pairingCode: string | null;
   /** Property management: the firm, and work-order numbers before Telo (seeded history) and with it. */
   firm: string;
+  portfolio: PortfolioDTO;
   metrics: {
     before: { workOrders: number; touches: number; daysToFix: number } | null;
     after: { workOrders: number; touches: number; daysToFix: number } | null;
@@ -211,4 +212,10 @@ export interface TaskDetailDTO extends TaskSummaryDTO {
   events: EventDTO[];
   flow: FlowStepDTO[];
   lastError: string | null;
+}
+
+export interface PortfolioDTO {
+  properties: { id: string; name: string; city: string; owner: string; units: { id: string; label: string; tenant: string | null; stage: WorkOrderStage | null; issue: string | null; taskId: string | null }[] }[];
+  /** Every vendor's record from the work-order history (the same events Keewano holds). */
+  vendors: { id: string; name: string; trades: string[]; visits: number; noShows: number; late: number; jobs: number; firstFix: number }[];
 }

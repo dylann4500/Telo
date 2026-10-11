@@ -1145,7 +1145,8 @@ async function finalize(taskId: string, status: Extract<TaskStatus, "completed" 
   if (!moved) return false;
   // A retry that was queued but is no longer needed (they called back first, say).
   await db.update(calls).set({ status: "canceled", finishedAt: new Date() }).where(and(eq(calls.taskId, taskId), eq(calls.status, "planned")));
-  const onCalendar = status === "completed" ? await addBookingToCalendar(task, result.confirmation) : "";
+  // A work order puts the vendor's window on the calendar when it's booked, not when it closes.
+  const onCalendar = status === "completed" && !maintenance.isMaintenance(task) ? await addBookingToCalendar(task, result.confirmation) : "";
   await recordEvent({
     userId: task.userId,
     taskId,
@@ -1162,6 +1163,11 @@ async function finalize(taskId: string, status: Extract<TaskStatus, "completed" 
     dedupeKey: `done:${taskId}:${status}`,
   });
   return false;
+}
+
+/** Puts a work order's booked vendor window on the manager's calendar, right when it's booked. */
+export async function addWorkOrderToCalendar(task: TaskRow, confirmation: string | null): Promise<string> {
+  return addBookingToCalendar(task, confirmation);
 }
 
 /** Puts the appointment a call booked on the user's calendar. Returns a few words for the result text. */

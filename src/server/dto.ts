@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import type { CallDTO, LiveCallDTO, MessageDTO, QuestionDTO, StateDTO, TaskDetailDTO, TaskSummaryDTO, WorkOrderDTO, WorkOrderStage } from "@/lib/types";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import type { CallDTO, LiveCallDTO, MessageDTO, PortfolioDTO, QuestionDTO, StateDTO, TaskDetailDTO, TaskSummaryDTO, WorkOrderDTO, WorkOrderStage } from "@/lib/types";
 import { config } from "./config";
 import { db } from "./db/client";
 import { calls, events, messages, questions, tasks, type CallRow, type QuestionRow, type TaskRow } from "./db/schema";
@@ -8,6 +8,7 @@ import { redactFact } from "./redact";
 import { buildFlow } from "./flow";
 import { getUser } from "./tasks/repo";
 import { FIRM, getOwner, getProperty, getTenancy, getUnit, getVendor } from "./portfolio";
+import { PROPERTIES, TENANCIES, UNITS, VENDORS } from "./portfolio/data";
 import { windowLabel } from "./time";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
@@ -108,6 +109,50 @@ function workOrder(t: TaskRow, business: CallRow[], open: QuestionRow | undefine
   };
 }
 
+/** The portfolio at a glance: each unit's open work order, and every vendor's record. */
+async function portfolioDTO(taskRows: TaskRow[], summaries: TaskSummaryDTO[]): Promise<PortfolioDTO> {
+  const openByUnit = new Map<string, TaskSummaryDTO>();
+  for (const sum of summaries) {
+    const row = taskRows.find((t) => t.id === sum.id);
+    const unit = row?.context?.kind === "maintenance" ? row.context.unit : undefined;
+    if (!unit || !sum.workOrder) continue;
+    const prev = openByUnit.get(unit);
+    // An open job wins over a closed one; otherwise the newest.
+    if (!prev || (prev.workOrder?.stage === "done" && sum.workOrder.stage !== "done")) openByUnit.set(unit, sum);
+  }
+  const properties = PROPERTIES.map((p) => ({
+    id: p.id,
+    name: p.name,
+    city: p.city,
+    owner: getOwner(p.ownerId)?.name ?? "",
+    units: UNITS.filter((u) => u.propertyId === p.id).map((u) => {
+      const t = openByUnit.get(u.id);
+      const tenancy = TENANCIES.find((x) => x.unitId === u.id);
+      return { id: u.id, label: u.label.replace(`${p.name}, `, "").replace(p.name, "House"), tenant: tenancy?.tenantName.split(" ")[0] ?? null, stage: t?.workOrder?.stage ?? null, issue: t?.workOrder?.issue ?? null, taskId: t?.id ?? null };
+    }),
+  }));
+  const rows = await db
+    .select({ type: events.type, typed: events.typed, vendor: sql<string>`json_extract(${events.refs}, '$.vendor')` })
+    .from(events)
+    .where(and(inArray(events.type, ["vendor.outcome", "wo.completed"]), isNotNull(sql`json_extract(${events.refs}, '$.vendor')`)));
+  const vendors = VENDORS.map((v) => {
+    const mine = rows.filter((r) => r.vendor === v.id);
+    const visits = mine.filter((r) => r.type === "vendor.outcome");
+    const jobs = mine.filter((r) => r.type === "wo.completed");
+    return {
+      id: v.id,
+      name: v.name,
+      trades: v.trades,
+      visits: visits.length,
+      noShows: visits.filter((r) => r.typed?.vendorOutcome === "no_show").length,
+      late: visits.filter((r) => r.typed?.vendorOutcome === "late").length,
+      jobs: jobs.length,
+      firstFix: jobs.filter((r) => r.typed?.woOutcome === "fixed_first_visit").length,
+    };
+  }).sort((a, b) => b.visits - a.visits);
+  return { properties, vendors };
+}
+
 /** Manager touches and days to fix per closed work order: the seeded history ("before") and Telo's own. */
 async function workOrderMetrics(): Promise<StateDTO["metrics"]> {
   const rows = await db.select({ typed: events.typed, data: events.data }).from(events).where(eq(events.type, "wo.completed"));
@@ -131,6 +176,13 @@ export async function buildState(userId: string): Promise<StateDTO> {
     where: eq(calls.kind, "user_inbound"),
     orderBy: desc(calls.createdAt),
   });
+  const summaries = taskRows.map((t) =>
+    summary(
+      t,
+      callRows.filter((c) => c.taskId === t.id),
+      openQs.filter((q) => q.taskId === t.id && q.status === "open").at(-1),
+    ),
+  );
   return {
     modes: {
       llm: config.llm.provider,
@@ -151,13 +203,8 @@ export async function buildState(userId: string): Promise<StateDTO> {
     teloPhone: config.voice.teloPhone,
     firm: FIRM.name,
     metrics: await workOrderMetrics(),
-    tasks: taskRows.map((t) =>
-      summary(
-        t,
-        callRows.filter((c) => c.taskId === t.id),
-        openQs.filter((q) => q.taskId === t.id && q.status === "open").at(-1),
-      ),
-    ),
+    portfolio: await portfolioDTO(taskRows, summaries),
+    tasks: summaries,
     messages: msgRows.reverse().map(messageDTO),
     liveUserCall: userCall && ["ringing", "in_progress"].includes(userCall.status) ? liveCall(userCall) : null,
     pairingCode: config.voice.provider === "dial" && config.voice.teloPhone ? await pairingCode() : null,

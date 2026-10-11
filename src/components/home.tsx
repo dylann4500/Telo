@@ -8,7 +8,7 @@ import { VoiceBars } from "./live-call";
 import { TaskCard } from "./task-card";
 import { Thread } from "./thread";
 import { Logo, ModeChips, SectionTitle, formatPhone, timeAgo } from "./ui";
-import { Board, KpiRow, LiveStrip } from "./work-board";
+import { Board, KpiRow, LiveStrip, PortfolioPanel } from "./work-board";
 
 const NEEDS_YOU = ["needs_info", "needs_approval"];
 const WORKING = ["new", "planning", "ready", "calling", "reviewing", "scheduled"];
@@ -51,6 +51,7 @@ export function Home() {
           <KpiRow tasks={tasks} metrics={data?.metrics} />
           <LiveStrip tasks={tasks} />
           <Board tasks={tasks} />
+          <PortfolioPanel portfolio={data?.portfolio} />
           <Column title="Needs you" tasks={needsYou} empty={null} />
           <Column title="Other tasks" tasks={working} empty={null} />
           <Column title="Done" tasks={done} empty={null} />

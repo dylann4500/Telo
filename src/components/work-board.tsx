@@ -22,7 +22,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import type { CallDTO, StateDTO, TaskSummaryDTO, WorkOrderStage } from "@/lib/types";
+import type { CallDTO, PortfolioDTO, StateDTO, TaskSummaryDTO, WorkOrderStage } from "@/lib/types";
 import { useTask } from "./api";
 import { LiveAsk, LiveTranscript, VoiceBars } from "./live-call";
 import { clock, timeAgo, useNow } from "./ui";
@@ -326,5 +326,114 @@ function Tag({ children, tone }: { children: React.ReactNode; tone?: "work" | "w
     <span className={clsx("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium", tone === "work" ? "bg-work-soft text-work" : tone === "wait" ? "bg-wait-soft text-wait" : "bg-surface-2 text-muted")}>
       {children}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------- the portfolio
+
+/** Every unit at a glance (colored by its open work order), and every vendor's record. Scales to a grid of hundreds of units. */
+export function PortfolioPanel({ portfolio }: { portfolio: PortfolioDTO | undefined }) {
+  if (!portfolio) return null;
+  const units = portfolio.properties.reduce((n, p) => n + p.units.length, 0);
+  const open = portfolio.properties.reduce((n, p) => n + p.units.filter((u) => u.stage && u.stage !== "done").length, 0);
+  return (
+    <section className="@container">
+      <div className="grid gap-2.5 @3xl:grid-cols-[1.15fr_1fr]">
+        <div className="rounded-2xl border border-line bg-surface p-3">
+          <div className="mb-2 flex items-baseline justify-between px-1">
+            <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Portfolio</h2>
+            <span className="text-[12px] text-faint">
+              {units} units · {open} with an open job
+            </span>
+          </div>
+          <div className="space-y-3">
+            {portfolio.properties.map((p) => (
+              <div key={p.id}>
+                <div className="flex items-baseline justify-between gap-2 px-1 text-[12px]">
+                  <span className="font-semibold">{p.name}</span>
+                  <span className="truncate text-faint">
+                    {p.city} · owner {p.owner}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {p.units.map((u) => {
+                    const tile = (
+                      <div
+                        className={clsx(
+                          "min-w-[104px] rounded-lg border px-2 py-1.5 transition",
+                          u.stage && u.stage !== "done" ? clsx(STAGE[u.stage].tone, "border-transparent") : "border-line bg-surface-2 text-muted",
+                          u.taskId && "hover:-translate-y-px hover:shadow-sm",
+                        )}
+                        title={u.issue ? `${u.issue} (${u.stage ? STAGE[u.stage].label : ""})` : "No open work order"}
+                      >
+                        <div className="text-[12px] font-semibold text-ink">{u.label}</div>
+                        <div className="truncate text-[11px]">{u.stage && u.stage !== "done" ? (u.issue ?? STAGE[u.stage].label) : (u.tenant ?? "Vacant")}</div>
+                      </div>
+                    );
+                    return u.taskId && u.stage && u.stage !== "done" ? (
+                      <Link key={u.id} href={`/tasks/${u.taskId}`}>
+                        {tile}
+                      </Link>
+                    ) : (
+                      <div key={u.id}>{tile}</div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-line bg-surface p-3">
+          <div className="mb-2 flex items-baseline justify-between px-1">
+            <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Vendors</h2>
+            <span className="flex items-center gap-1 text-[11px] text-faint">
+              <BrainCircuit className="size-3" /> the record Telo ranks by
+            </span>
+          </div>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-left text-[10.5px] uppercase tracking-wide text-faint">
+                <th className="px-1 pb-1 font-medium">Vendor</th>
+                <th className="px-1 pb-1 text-right font-medium">Visits</th>
+                <th className="px-1 pb-1 text-right font-medium">No-shows</th>
+                <th className="px-1 pb-1 text-right font-medium">Late</th>
+                <th className="px-1 pb-1 font-medium">Fixed 1st visit</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {portfolio.vendors.map((v) => {
+                const pct = v.jobs ? Math.round((v.firstFix / v.jobs) * 100) : null;
+                const Icon = TRADE_ICON[v.trades[0]] ?? Wrench;
+                return (
+                  <tr key={v.id}>
+                    <td className="px-1 py-1.5">
+                      <span className="flex items-center gap-1.5">
+                        <Icon className="size-3.5 shrink-0 text-muted" />
+                        <span className="truncate font-medium">{v.name}</span>
+                      </span>
+                    </td>
+                    <td className="px-1 py-1.5 text-right tabular-nums text-muted">{v.visits}</td>
+                    <td className={clsx("px-1 py-1.5 text-right tabular-nums", v.noShows ? "font-semibold text-bad" : "text-faint")}>{v.noShows}</td>
+                    <td className={clsx("px-1 py-1.5 text-right tabular-nums", v.late ? "text-wait" : "text-faint")}>{v.late}</td>
+                    <td className="px-1 py-1.5">
+                      {pct === null ? (
+                        <span className="text-faint">–</span>
+                      ) : (
+                        <span className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-14 overflow-hidden rounded-full bg-surface-2">
+                            <span className={clsx("block h-full rounded-full", pct >= 75 ? "bg-done" : pct >= 50 ? "bg-wait" : "bg-bad")} style={{ width: `${pct}%` }} />
+                          </span>
+                          <span className="tabular-nums text-muted">{pct}%</span>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 }

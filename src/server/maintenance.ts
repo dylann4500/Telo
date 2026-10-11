@@ -9,7 +9,7 @@ import { TERMINAL_STATUSES } from "./domain/types";
 import { newId } from "./ids";
 import { recordEvent } from "./memory/events";
 import { notify } from "./notify";
-import { advance, finalizeTask, kick } from "./orchestrator";
+import { addWorkOrderToCalendar, advance, finalizeTask, kick } from "./orchestrator";
 import { assetFor, assetLabel, FIRM, getAsset, getOwner, getTenancy, getUnit, getVendor, homeOf, isFictional, vendorByName, type Party } from "./portfolio";
 import { assetHistory, rankVendors, shouldQuoteReplacement, type Scorecard } from "./portfolio/insights";
 import { containsSecret, maskSecrets } from "./redact";
@@ -608,11 +608,13 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
     ["reviewing"],
   );
   if (!moved) return false;
+  // Vendor windows belong on the manager's calendar (when one is connected).
+  const onCalendar = await addWorkOrderToCalendar(moved, confirmation);
   await notify({
     userId: task.userId,
     taskId: task.id,
     kind: "report",
-    body: `Booked ${vendor.name} for ${unit.label} ${window} at ${usd(cents)}${ownerApproved ? `, approved by ${owner ? firstName(owner.name) : "the owner"} while they held` : ""}. ${firstName(tenant.name)} has the time and the entry notice.`,
+    body: `Booked ${vendor.name} for ${unit.label} ${window} at ${usd(cents)}${ownerApproved ? `, approved by ${owner ? firstName(owner.name) : "the owner"} while they held` : ""}. ${firstName(tenant.name)} has the time and the entry notice.${onCalendar}`,
     dedupeKey: `booked:${task.id}`,
   });
   return false;
