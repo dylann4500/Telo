@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "llm:check": "tsx scripts/llm-check.ts"
+    "llm:check": "tsx scripts/llm-check.ts",
+    "lab": "tsx scripts/edge-lab.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
