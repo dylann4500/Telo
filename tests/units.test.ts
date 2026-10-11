@@ -5,6 +5,8 @@ import { containsSecret, maskSecrets, redactValue } from "../src/server/redact";
 import { normalizeDialEvent, signDialPayload, verifyDialSignature } from "../src/server/voice/dial-webhook";
 import { looksLikeVoicemail } from "../src/server/concierge";
 import { sanitizeForSms } from "../src/server/voice/provider";
+import { clampToCallingHours, localIso, nextWeekdayMorning } from "../src/server/time";
+import { approvalText } from "../src/server/orchestrator";
 
 describe("task state machine", () => {
   it("allows the happy path and blocks shortcuts", () => {
@@ -20,6 +22,28 @@ describe("task state machine", () => {
   });
   it("only lets a call be placed from ready", () => {
     expect(sourcesFor("calling")).toEqual(["ready"]);
+  });
+  it("parks a task for later and wakes it back into the normal path", () => {
+    expect(canTransition("reviewing", "scheduled")).toBe(true);
+    expect(canTransition("planning", "scheduled")).toBe(true); // the user asked for a later call
+    expect(canTransition("scheduled", "ready")).toBe(true); // a queued retry
+    expect(canTransition("scheduled", "planning")).toBe(true); // a callback to plan
+    expect(canTransition("scheduled", "reviewing")).toBe(true); // they called back first
+    expect(canTransition("scheduled", "calling")).toBe(false);
+  });
+});
+
+describe("calling hours", () => {
+  const tz = "America/Los_Angeles";
+  const at = (iso: string) => localIso(clampToCallingHours(new Date(iso), tz), tz);
+  it("keeps a reasonable time and moves early or late ones to 10 AM", () => {
+    expect(at("2026-10-13T14:00:00-07:00")).toBe("2026-10-13T14:00:00-07:00");
+    expect(at("2026-10-13T06:30:00-07:00")).toBe("2026-10-13T10:00:00-07:00");
+    expect(at("2026-10-13T22:15:00-07:00")).toBe("2026-10-14T10:00:00-07:00");
+    expect(at("2026-10-31T23:30:00-07:00")).toBe("2026-11-01T10:00:00-08:00"); // across the end of daylight saving
+  });
+  it("defaults a callback with no time to the next weekday morning", () => {
+    expect(localIso(nextWeekdayMorning(tz, new Date("2026-10-10T19:05:00-07:00")), tz)).toBe("2026-10-12T10:00:00-07:00");
   });
 });
 
@@ -84,6 +108,17 @@ describe("voicemail greetings", () => {
     expect(looksLikeVoicemail("Sorry. The person you are trying to reach has a voice mailbox that has not been set up yet. Please try your call again later. Goodbye.")).toBe(true);
     expect(looksLikeVoicemail("You've reached Dylan, leave me a message after the tone.")).toBe(true);
     expect(looksLikeVoicemail("Yeah keep cancelling, don't take the offer.")).toBe(false);
+  });
+});
+
+describe("decision texts", () => {
+  const options = [{ id: "cancel", label: "Cancel and pay the $75 fee" }, { id: "freeze", label: "Freeze for $10/month" }];
+  it("always end by asking, since a text has no buttons", () => {
+    expect(approvalText("Cancelling now costs a $75 fee. They offered a freeze instead.", "Which do you want?", options)).toBe(
+      "Cancelling now costs a $75 fee. They offered a freeze instead. Which do you want?",
+    );
+    expect(approvalText("Cancelling now costs a $75 fee.", "Decision needed", options)).toBe("Cancelling now costs a $75 fee. Cancel and pay the $75 fee, or Freeze for $10/month?");
+    expect(approvalText("It's $480, over your $400 budget. Book it anyway?", "Book?", options)).toBe("It's $480, over your $400 budget. Book it anyway?");
   });
 });
 
