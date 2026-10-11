@@ -193,6 +193,35 @@ const baysideCall = (): SimTurn[] => [
 ];
 SCENARIOS.push({ match: /bayside|westbay/i, persona: () => baysideCall(), script: () => baysideCall() });
 
+// Property management, offline: two HVAC vendors called at once for Unit B's AC.
+// Rapid Air can come tonight for $650, over the owner's $500 limit, so Telo asks
+// the owner while Luis holds (answer as the owner from the dashboard's demo
+// controls, or reply by text). Summit can only do Thursday.
+const rapidAirCall = (): SimTurn[] => [
+  other("Rapid Air Heating and Cooling, this is Luis."),
+  agent("Hi Luis, this is Telo, an AI assistant calling for Dylan at Bayside Property Management; this call is recorded. A tenant's central AC is blowing warm air at 1418 Alder St in Oakland. Can someone come out tonight?"),
+  other("We can do tonight between 8 and 9. From what you describe it's likely the capacitor and contactor. That repair is $650, all in."),
+  {
+    speaker: "agent",
+    text: "One moment, that's over the owner's limit, so I'm checking with them.",
+    tool: { name: "ask_customer", args: { detail: "Approve $650 tonight?", question: "Rapid Air can fix Unit B's AC tonight between 8 and 9 for $650. It's the third failure since June. Approve it, and do you want a replacement quote too?", options: ["Approve $650", "Approve $650 and get a replacement quote", "Don't approve"] } },
+  },
+  { speaker: "agent", text: "", tool: { name: "wait_for_customer" } },
+  { speaker: "agent", text: "Thanks for holding. The owner says: {answer}. Please book tonight, and could your tech price a full replacement while he's there?", orElse: "Sorry, I can't reach the owner right now. Could you hold tonight's slot while I confirm and call you back?" },
+  { speaker: "other", text: "You're booked for tonight between 8 and 9. Marco will bring a replacement quote too; a new 3-ton system runs about $6,800. Confirmation RA2231.", orElse: "I can hold it for an hour. Call me back when you know." },
+  { speaker: "agent", text: "Tonight between 8 and 9, confirmation RA2231. Thank you, Luis.", orElse: "Thank you, I'll call you back shortly." },
+];
+const summitCall = (): SimTurn[] => [
+  other("Summit Mechanical, Dana speaking."),
+  agent("Hi Dana, this is Telo, an AI assistant calling for Dylan at Bayside Property Management; this call is recorded. A tenant's AC is out at 1418 Alder St in Oakland. When's your earliest visit, and what does it cost?"),
+  other("Earliest I have is Thursday, 9 to 11 in the morning. The diagnostic is $180, plus our $79 trip fee."),
+  agent("Thanks, Dana. Let me confirm with the team and get back to you."),
+  other("Sounds good. I'll keep Thursday open for now."),
+  agent("Thank you, bye."),
+];
+SCENARIOS.push({ match: /rapid air/i, persona: () => rapidAirCall(), script: () => rapidAirCall() });
+SCENARIOS.push({ match: /summit mechanical/i, persona: () => summitCall(), script: () => summitCall() });
+
 export const GENERIC: Scenario = {
   match: /.*/,
   persona: "A helpful, ordinary customer service representative who answers questions plainly and resolves simple requests.",

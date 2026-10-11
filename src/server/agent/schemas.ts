@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { COMMITMENT_KINDS, OFFER_KINDS } from "../domain/types";
+import { COMMITMENT_KINDS, OFFER_KINDS, SEVERITIES, TRADES } from "../domain/types";
 
 // Output contracts for every model call. Kept free of length/regex limits so
 // they convert cleanly to the JSON Schema subset structured outputs accept.
@@ -264,3 +264,17 @@ export const SimulatedCallSchema = z.object({
   outcome: z.enum(["answered", "no_answer", "voicemail"]),
   turns: z.array(z.object({ speaker: z.enum(["agent", "other"]), text: z.string() })),
 });
+
+// Property management: reading a tenant's maintenance report.
+export const TriageSchema = z.object({
+  title: z.string().describe("Short work-order title, e.g. 'AC not cooling'"),
+  problem: z.string().describe("One sentence a vendor can act on, e.g. 'Central AC blowing warm air; thermostat set to 72, house at 85'"),
+  trade: z.enum(TRADES),
+  severity: z.enum(SEVERITIES).describe("More severe when unsure"),
+  emergency: z.enum(["none", "gas", "fire", "co", "water", "sewage", "no_heat", "no_power", "lockout", "security"]),
+  jobCode: z.string().describe("snake_case job code, e.g. ac_no_cool, wh_no_hot_water, sink_leak, toilet_clog, outlet_dead, fridge_not_cooling, lock_broken"),
+  needPhotos: z.boolean().describe("true when photos would help the vendor and the tenant sent none"),
+  tenantReply: z.string().describe("Text back to the tenant: short, warm, first name; say Telo is lining up a vendor now; ask for the specific photos if needPhotos"),
+  safetyMessage: z.string().nullable().describe("For gas, fire, CO, flooding or sparking: the safety instructions to text right away; otherwise null"),
+});
+export type TriageResult = z.infer<typeof TriageSchema>;

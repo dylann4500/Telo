@@ -14,6 +14,8 @@ import { config } from "./config";
 import { statusDigest } from "./status";
 import { getCall, getTask, getUser, getUserByPhone, listQuestions, patchTask } from "./tasks/repo";
 import { formatWhen, localParts, nowContext, zonedTime } from "./time";
+import { isMaintenance, notifyParty } from "./maintenance";
+import { getOwner, getUnit } from "./portfolio";
 
 // Telo's tools during calls: what Dial's voice agent can call on Telo's MCP
 // server (and the simulated line calls the same way). Dial sends no call id,
@@ -148,6 +150,8 @@ export async function resolveCaller(direction: string | null, other: string | nu
 }
 
 const first = (u: UserRow) => u.name.split(" ")[0];
+/** Who a mid-call question went to: the manager by first name, or "the owner" for a work order's spending decision. */
+const askedOf = (q: QuestionRow, u: UserRow) => ((q.context as { party?: unknown }).party ? "the owner" : first(u));
 /** "Account number" → "your account number". */
 const yours = (detail: string) => {
   const d = detail.trim().replace(/[?.]+$/, "").toLowerCase();
@@ -257,6 +261,10 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
     : [{ key: slug(label), label, question, sensitive: /account|member|birth|address|email|phone|policy|license|card|digits/i.test(label), required: true }];
   const choices: ApprovalOption[] = decision ? options.map((label, i) => ({ id: `${slug(label)}_${i + 1}`, label })) : [];
   const id = newId("q");
+  // A work order's spending decision is the owner's: asked by text while the vendor holds.
+  const owner = decision && isMaintenance(task) ? getOwner(task.context.owner) : undefined;
+  const dollars = question.match(/\$\s?([\d,]+(?:\.\d{2})?)/)?.[1];
+  const amountCents = dollars ? Math.round(Number(dollars.replace(/,/g, "")) * 100) : undefined;
   // Replaces this call's earlier question and any question from between calls; a parallel call's live question stays.
   for (const old of (await listQuestions(task.id)).filter((x) => x.status === "open")) {
     const c = old.context as { live?: boolean; callId?: string };
@@ -270,9 +278,9 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
     prompt: question,
     fields,
     options: choices,
-    context: { live: true, callId: call.id, askedAt: new Date().toISOString(), target: call.targetName },
+    context: { live: true, callId: call.id, askedAt: new Date().toISOString(), target: call.targetName, ...(owner ? { party: { role: "owner", id: owner.id, name: owner.name }, amountCents } : {}) },
   });
-  const waiting = decision ? "Waiting on your decision" : `Waiting on you: ${label.toLowerCase()}`;
+  const waiting = owner ? "Waiting on the owner" : decision ? "Waiting on your decision" : `Waiting on you: ${label.toLowerCase()}`;
   await db.update(calls).set({ statusDetail: waiting }).where(eq(calls.id, call.id));
   await patchTask(task.id, { statusDetail: `${call.targetName}: ${waiting}` }, ["calling"]);
   await recordEvent({
@@ -284,6 +292,27 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
     summary: `Asked you during the call: ${decision ? question : label}`,
     data: { question, options },
   });
+  if (owner && isMaintenance(task)) {
+    const { owner: o, property, unit, asset, tenancy } = task.context;
+    await recordEvent({
+      userId: user.id,
+      taskId: task.id,
+      callId: call.id,
+      type: "approval.requested",
+      summary: `Asked ${owner.name} (owner) while ${call.targetName} held: ${question}`,
+      typed: { approvalKind: /replac/i.test(question) ? "replace" : "repair", amountCents, approvalChannel: "sms", approvalWhileHolding: true },
+      refs: { owner: o, property, unit, asset, tenancy },
+    });
+    const where = getUnit(task.context.unit)?.label ?? "the unit";
+    await notifyParty({
+      party: { role: "owner", id: owner.id, name: owner.name, phone: owner.phone },
+      taskId: task.id,
+      kind: "approval",
+      body: approvalText(`${call.targetName} is on the line about ${where}. ${question}`, question, choices),
+      dedupeKey: `live:${id}`,
+    });
+    return ok(`Texted the owner. Say: "One moment, I'm just checking with the owner." Then call wait_for_customer.`, { status: "asked", questionId: id });
+  }
   const body = decision
     ? approvalText(`I'm on the phone with ${call.targetName}. ${question}`, question, choices)
     : `I'm on the phone with ${call.targetName} and they need ${yours(label)}. ${question}`;
@@ -293,9 +322,9 @@ async function askUser({ user, call, task }: Business, args: Record<string, unkn
 }
 
 async function waitForAnswer({ user, call }: Business): Promise<ToolResult> {
-  const name = first(user);
   const q = (await liveQuestions(call))[0];
-  if (!q) return ok(`You haven't asked ${name} anything on this call. Use ask_customer first.`, { status: "none" });
+  if (!q) return ok(`You haven't asked ${first(user)} anything on this call. Use ask_customer first.`, { status: "none" });
+  const name = askedOf(q, user);
   const ctx = q.context as { askedAt?: string; lapsed?: boolean };
   const askedAt = Date.parse(String(ctx.askedAt ?? q.createdAt.toISOString()));
   const giveUpAt = askedAt + liveWaitMs();
@@ -328,7 +357,7 @@ async function waitForAnswer({ user, call }: Business): Promise<ToolResult> {
 }
 
 async function answered(user: UserRow, q: QuestionRow): Promise<ToolResult> {
-  const name = first(user);
+  const name = askedOf(q, user);
   const a = (q.answer ?? {}) as { keys?: string[]; optionId?: string | null; approve?: boolean; note?: string | null };
   if (q.kind === "approval") {
     const option = q.options.find((o) => o.id === a.optionId);

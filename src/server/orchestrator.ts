@@ -29,6 +29,7 @@ import { getTask, getUser, listCalls, listOrganizations, listQuestions, listRece
 import { clampToCallingHours, formatWhen, nextWeekdayMorning, nowContext } from "./time";
 import { getVoice } from "./voice";
 import { parseDialError } from "./voice/dial";
+import * as maintenance from "./maintenance";
 
 // Drives a task through its lifecycle. Each state has one step function;
 // `advance` runs steps until the task is waiting on something external (the
@@ -258,6 +259,7 @@ async function recentBusinesses(userId: string, excludeTaskId: string) {
 
 /** new → needs_info | planning: work out the goal, targets, facts and authority. */
 async function understand(task: TaskRow): Promise<boolean> {
+  if (maintenance.isMaintenance(task)) return maintenance.triage(task);
   const user = (await getUser(task.userId))!;
   const directory = (await listOrganizations()).map((o) => ({ name: o.name, phone: o.phone, aliases: o.aliases }));
   const r = await agent.understandTask({
@@ -447,7 +449,8 @@ async function plan(task: TaskRow): Promise<boolean> {
     task.id,
     later ? "scheduled" : "ready",
     {
-      plan: { strategy: p.strategy, parallel: p.parallel, legs: [...(task.plan?.legs ?? []), ...legs] },
+      // A work order calls its vendors at once, to compare availability and price.
+      plan: { strategy: p.strategy, parallel: maintenance.isMaintenance(task) ? legs.length > 1 : p.parallel, legs: [...(task.plan?.legs ?? []), ...legs] },
       memory,
       followUp: null,
       wakeAt: later,
@@ -460,7 +463,7 @@ async function plan(task: TaskRow): Promise<boolean> {
   // Without earlier questions, the acknowledgement already said "calling now"
   // (or when); this update is for after answers, or to share remembered history.
   const ackSent = !(await db.query.questions.findFirst({ where: and(eq(questions.taskId, task.id), eq(questions.status, "answered")) }));
-  if (!followUp && (!ackSent || (!later && memory.summary))) {
+  if (!followUp && !maintenance.isMaintenance(task) && (!ackSent || (!later && memory.summary))) {
     const body = later ? `Got it. I'll call ${who} ${formatWhen(later, user.timezone)}.` : p.userUpdate;
     await notify({ userId: task.userId, taskId: task.id, kind: "update", body, dedupeKey: `plan:${task.id}` });
   }
@@ -552,7 +555,8 @@ async function placeOne(task: TaskRow, user: UserRow, call: CallRow): Promise<bo
       orgKey: call.orgKey,
       type: "call.started",
       summary: `Calling ${call.targetName}: ${call.purpose}`,
-      typed: { purpose: taskKind(task), briefUsed: Boolean(task.memory?.summary) },
+      typed: { purpose: maintenance.isMaintenance(task) ? (task.context.jobCode ?? "maintenance") : taskKind(task), briefUsed: Boolean(task.memory?.summary), ...(maintenance.isMaintenance(task) ? { callParty: "vendor" as const } : {}) },
+      refs: callRefs(task, call),
     });
     return true;
   } catch (err) {
@@ -590,6 +594,10 @@ export async function onEmailForTask(taskId: string): Promise<boolean> {
 export async function wakeTask(taskId: string): Promise<boolean> {
   const task = await getTask(taskId);
   if (!task || task.status !== "scheduled") return false;
+  if (maintenance.isMaintenance(task) && maintenance.WAKEABLE_STAGES.includes(task.context.stage ?? "triage")) {
+    await maintenance.wake(task);
+    return true;
+  }
   const planned = (await listCalls(taskId)).filter((c) => c.kind === "business" && c.status === "planned");
   const name = planned[0]?.targetName ?? task.followUp?.callback?.targetName ?? task.targets[0]?.name ?? "them";
   const moved = await transitionTask(
@@ -620,6 +628,7 @@ async function review(task: TaskRow): Promise<boolean> {
   }
 
   const fresh = (await getTask(task.id))!;
+  if (maintenance.isMaintenance(fresh)) return maintenance.afterCalls(fresh);
   const all = await listCalls(task.id);
   const business = all.filter((c) => c.kind === "business");
   const remaining = business.filter((c) => c.status === "planned");
@@ -1015,7 +1024,8 @@ const OUTCOME_FOR_KEEWANO: Record<CallAnalysis["outcome"], string> = {
 
 /** Turns one analyzed call into memory events. Spaced a second apart so Keewano's per-second grouping stays unambiguous. */
 async function recordCallOutcome(task: TaskRow, call: CallRow, a: CallAnalysis) {
-  const base = { userId: task.userId, taskId: task.id, callId: call.id, orgKey: call.orgKey };
+  // A work order's calls go on the vendor's stream (and the unit's), not the consumer streams.
+  const base = { userId: task.userId, taskId: task.id, callId: call.id, orgKey: call.orgKey, refs: callRefs(task, call) };
   // One second apart (Keewano groups context by second), ending now, so
   // anything recorded after this (task.completed) still sorts last.
   const count = 2 + a.facts.length + a.offers.length + a.priorCommitments.length + a.commitments.length + a.confirmationNumbers.length;
@@ -1030,7 +1040,7 @@ async function recordCallOutcome(task: TaskRow, call: CallRow, a: CallAnalysis) 
     type: reached ? "call.completed" : "call.failed",
     summary: `Call with ${call.targetName}: ${a.summary}`,
     data: { outcome: a.outcome, repName: a.repName, durationSec: call.durationSec },
-    typed: { outcome: OUTCOME_FOR_KEEWANO[a.outcome], durationSeconds: call.durationSec ?? undefined },
+    typed: { outcome: OUTCOME_FOR_KEEWANO[a.outcome], durationSeconds: call.durationSec ?? undefined, ...(maintenance.isMaintenance(task) ? { callParty: "vendor" as const } : {}) },
     occurredAt: at(),
   });
   for (const f of a.facts) {
@@ -1091,6 +1101,14 @@ async function recordCallOutcome(task: TaskRow, call: CallRow, a: CallAnalysis) 
   }
 }
 
+/** The Keewano streams for a work order's vendor call: the vendor, plus the unit and the rest of the task's portfolio. */
+function callRefs(task: TaskRow, call: CallRow) {
+  if (!maintenance.isMaintenance(task)) return null;
+  const vendor = maintenance.vendorForCall(call);
+  const { owner, property, unit, asset, tenancy } = task.context;
+  return { owner, property, unit, asset, tenancy, ...(vendor ? { vendor: vendor.id } : {}) };
+}
+
 function confirmsKind(task: TaskRow, a: CallAnalysis): string {
   const c = a.commitments[0]?.kind;
   if (c === "cancellation") return "cancellation";
@@ -1103,6 +1121,10 @@ function confirmsKind(task: TaskRow, a: CallAnalysis): string {
 }
 
 /** Ends a task, redacts task-scoped sensitive facts, and tells the user. */
+export async function finalizeTask(taskId: string, status: Extract<TaskStatus, "completed" | "failed">, result: TaskResult, message: string): Promise<boolean> {
+  return finalize(taskId, status, result, message);
+}
+
 async function finalize(taskId: string, status: Extract<TaskStatus, "completed" | "failed">, result: TaskResult, message: string): Promise<boolean> {
   const task = (await getTask(taskId))!;
   const moved = await transitionTask(

@@ -119,3 +119,18 @@ export function entityNames(): { kind: string; id: string; name: string }[] {
     ...agencies().map((a) => ({ kind: "agency", id: a.id, name: a.name })),
   ];
 }
+
+/** The seeded 555-01xx numbers are fictional: a real line never dials or texts them. */
+export function isFictional(phone: string | null | undefined): boolean {
+  return /^(\+?1)?\d{3}55501\d{2}$/.test((phone ?? "").replace(/[^\d+]/g, ""));
+}
+
+/** The portfolio vendor a call or task target names (by name, or by the org key derived from it). */
+export function vendorByName(name: string | null | undefined): Vendor | undefined {
+  const key = (name ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!key) return undefined;
+  return vendors().find((v) => {
+    const k = v.name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    return k === key || k.replace(/and/g, "") === key.replace(/and/g, "") || (key.length >= 6 && (k.startsWith(key) || key.startsWith(k)));
+  });
+}

@@ -90,6 +90,18 @@ function laterTime(text: string, b: Blocks): string | null {
   return localIso(zonedTime(p.year, p.month, p.day, hour, minute, tz), tz);
 }
 
+/** "tonight between 8 and 9" → today's evening window, in the user's timezone. */
+function tonightWindow(text: string, b: Blocks): { startsAt: string; endsAt: string; label: string } | null {
+  const m = text.match(/\btonight between (\d{1,2})(?::(\d{2}))? and (\d{1,2})(?::(\d{2}))?/i);
+  if (!m) return null;
+  const { now, tz } = clock(b);
+  const p = localParts(now, tz);
+  const h = (x: string) => (Number(x) % 12) + 12;
+  const start = zonedTime(p.year, p.month, p.day, h(m[1]), Number(m[2] ?? 0), tz);
+  const end = zonedTime(p.year, p.month, p.day, h(m[3]), Number(m[4] ?? 0), tz);
+  return { startsAt: localIso(start, tz), endsAt: localIso(end, tz), label: `tonight ${m[1]}-${m[3]} PM` };
+}
+
 function confirmationNumbers(text: string): string[] {
   const out = new Set<string>();
   const re = /(?:confirmation|reference|ticket|case)(?:\s+(?:number|no\.?|#))?(?:\s+is)?[\s:#]*([A-Z0-9][A-Z0-9-]{3,})/gi;
@@ -129,6 +141,8 @@ export class MockLLM implements LLM {
         return { outcome: "answered", turns: [] };
       case "resolve-time":
         return { startsAt: laterTime(String(b.said ?? ""), b) };
+      case "triage-maintenance":
+        return this.triage(b);
       default:
         throw new Error(`MockLLM has no handler for ${name}`);
     }
@@ -332,10 +346,11 @@ export class MockLLM implements LLM {
       infoRequested: [] as { label: string; reason: string }[],
       booking: null as unknown,
     };
+    const tonight = tonightWindow(them, b);
     if (/booked|got you down|moved it|scheduled you|see you (then|tomorrow)/i.test(them)) {
-      const startsAt = laterTime(them, b);
+      const startsAt = tonight?.startsAt ?? laterTime(them, b);
       const where = (b.call_brief as { targetName?: string } | undefined)?.targetName;
-      if (startsAt) base.booking = { title: `${(b.task as { title: string }).title}${where ? ` (${where})` : ""}`, startsAt, endsAt: null, location: null };
+      if (startsAt) base.booking = { title: `${(b.task as { title: string }).title}${where ? ` (${where})` : ""}`, startsAt, endsAt: tonight?.endsAt ?? null, location: null };
     }
     const priorConf = (String(b.prior_history_given_to_agent ?? "") + " " + JSON.stringify(b.call_brief ?? "")).match(/confirmation ([A-Z0-9]{4,})/i)?.[1] ?? null;
     if (/never (got )?applied|wasn't applied|was not applied|don't see (it|the credit)|no record/i.test(all) && priorConf) {
@@ -395,9 +410,9 @@ export class MockLLM implements LLM {
       };
     }
     const noAvail = /no availability|fully booked|booked up|can't do|cannot do|nothing until/i.test(them);
-    const isQuote = /quote|price|estimate|replace/i.test(String((b.call_brief as { purpose?: string })?.purpose ?? "") + them);
+    const isQuote = /quote|price|estimate|replace|diagnostic|trip fee/i.test(String((b.call_brief as { purpose?: string })?.purpose ?? "") + them);
     if (isQuote && (prices.length || noAvail)) {
-      const when = them.match(/\b(tomorrow|today|monday|tuesday|wednesday|thursday|friday)\b[^.]*?\b(\d{1,2}(:\d{2})?\s*(am|pm)?)/i)?.[0] ?? null;
+      const when = tonight?.label ?? them.match(/\b(tomorrow|today|monday|tuesday|wednesday|thursday|friday)\b[^.]*?\b(\d{1,2}(:\d{2})?\s*(am|pm)?)/i)?.[0] ?? null;
       return {
         ...base,
         outcome: noAvail ? "partial" : "success",
@@ -429,6 +444,48 @@ export class MockLLM implements LLM {
           ? [{ by: "business", kind: "cancellation", description: "Cancel the membership", amountUsd: null, due: them.match(/\b(?:ends|effective|through|until) ([A-Z][a-z]+ \d{1,2})/)?.[1] ?? null }]
           : [],
       nextStep: "Report back to the user.",
+    };
+  }
+
+  /** Keyword triage of a tenant's report: trade, severity, emergencies. */
+  private triage(b: Blocks) {
+    const report = String(b.report ?? "");
+    const t = report.toLowerCase();
+    const first = String(b.tenant_first_name ?? "there");
+    const photos = Number(b.photos_sent ?? 0);
+    const gas = /smell(s|ing)? (of )?gas|gas smell|gas leak/.test(t);
+    const fire = /\bfire\b|smoke|sparks?|sparking/.test(t);
+    const co = /carbon monoxide|\bco alarm|co detector/.test(t);
+    const flood = /flood|pouring|burst|gushing|water everywhere/.test(t);
+    const rules: [RegExp, string, string, string][] = [
+      [/\b(ac|a\/c|air ?condition\w*|cooling|blowing warm)\b/, "hvac", "ac_no_cool", "AC not cooling"],
+      [/\b(heat|heater|furnace)\b/, "hvac", "no_heat", "No heat"],
+      [/hot water|water heater/, "plumbing", "wh_no_hot_water", "No hot water"],
+      [/\b(leak|leaking|drip|toilet|sink|clog|drain|pipe)\b/, "plumbing", /toilet|clog|drain/.test(t) ? "drain_clog" : "sink_leak", /toilet|clog|drain/.test(t) ? "Clogged drain" : "Leak"],
+      [/\b(outlet|power|breaker|lights?|electric\w*)\b/, "electrical", "outlet_dead", "Power out to part of the unit"],
+      [/\b(fridge|refrigerator|dishwasher|washer|dryer|stove|oven|range)\b/, "appliance", "appliance_broken", "Appliance not working"],
+      [/\b(lock|key|door won'?t)\b/, "locks", "lock_broken", "Lock problem"],
+      [/\b(roof|ceiling stain)\b/, "roof", "roof_leak", "Roof leak"],
+    ];
+    const hit = rules.find(([re]) => re.test(t));
+    const [trade, jobCode, title] = hit ? [hit[1], hit[2], hit[3]] : ["general", "general_repair", "Repair needed"];
+    const emergency = gas ? "gas" : fire ? "fire" : co ? "co" : flood ? "water" : "none";
+    const severity = emergency !== "none" ? "emergency" : /hvac|plumbing|locks|electrical/.test(trade) ? "urgent" : "routine";
+    const needPhotos = photos === 0 && emergency === "none";
+    const ask = trade === "hvac" ? "a photo of the thermostat and the outdoor unit" : trade === "plumbing" ? "a photo of the leak and what's under it" : "a photo of the problem";
+    return {
+      title,
+      problem: report.replace(/\s+/g, " ").trim().slice(0, 200),
+      trade,
+      severity,
+      emergency,
+      jobCode,
+      needPhotos,
+      tenantReply: needPhotos
+        ? `Thanks ${first}, I'm lining up a vendor now and will text you a time. Can you send ${ask}?`
+        : `Thanks ${first}, I'm lining up a vendor now and will text you a time.`,
+      safetyMessage:
+        gas || co ? "Please leave the home now and call 911 from outside, then the gas company. Don't flip switches or use anything that sparks." : fire ? "Get out now and call 911." : flood ? "If it's safe, shut the water valve under the sink or at the main. Move valuables away from the water." : null,
     };
   }
 

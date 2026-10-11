@@ -233,6 +233,13 @@ export interface TaskContext extends EntityRefs {
   photoCount?: number;
   /** Vendors in scorecard order, best first, as ranked when the task was planned. */
   ranked?: string[];
+  /** Where the work order is: triage, calling vendors, booked (waiting for the visit), checking it's fixed, closed. */
+  stage?: "triage" | "dispatching" | "booked" | "checking" | "closed";
+  problem?: string;
+  /** Asset history says ask for a replacement price too (or the owner asked for one). */
+  replaceQuote?: boolean;
+  booked?: { vendor: string; cents: number; startsAt: string | null; endsAt: string | null; confirmation: string | null; ownerApproved: boolean };
+  accessConfirmed?: boolean;
 }
 
 /** Who a message went to or came from, when it isn't the property manager. */

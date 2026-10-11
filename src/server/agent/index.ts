@@ -254,3 +254,28 @@ export function simulateCall(input: { business: string; instructions: string; sc
     effort: "low",
   });
 }
+
+/** A tenant's maintenance report, read into a work order. */
+export function triageMaintenance(input: {
+  now: string;
+  report: string;
+  tenantFirstName: string;
+  unit: { label: string; beds: number; baths: number };
+  assets: { type: string; installYear: number }[];
+  photos: number;
+}) {
+  return getLLM().structured({
+    name: "triage-maintenance",
+    system: P.TRIAGE_SYSTEM,
+    prompt: context({
+      now: input.now,
+      tenant_first_name: input.tenantFirstName,
+      unit: input.unit,
+      unit_assets: input.assets,
+      photos_sent: input.photos,
+      report: input.report,
+    }),
+    schema: S.TriageSchema,
+    effort: "low",
+  });
+}

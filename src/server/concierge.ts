@@ -11,6 +11,7 @@ import { advance, cancelTask, normalizePhone, phoneTarget, wakeTask } from "./or
 import { containsSecret, maskSecrets } from "./redact";
 import { formatWhen, nowContext } from "./time";
 import { answerStatus } from "./status";
+import { partyByPhone } from "./portfolio";
 import { callIsLive, getCall, getTask, getUser, getUserByPhone, listActiveTasks, listRecentTasks, openLiveQuestion, openQuestion, patchTask, recentMessages, transitionTask } from "./tasks/repo";
 
 // Everything the user sends Telo (a text, a web chat message, a live voice
@@ -27,9 +28,15 @@ function asChannel(raw: string): Channel {
 }
 
 /** A text from Dial. */
-export async function handleInboundText(input: { from: string; body: string; channel: string; providerMessageId: string }) {
+export async function handleInboundText(input: { from: string; body: string; channel: string; providerMessageId: string; media?: string[] }) {
   const user = await getUserByPhone(input.from);
   if (!user) {
+    // Tenants, owners and vendors in the portfolio (property management).
+    const party = partyByPhone(input.from);
+    if (party && party.role !== "manager") {
+      const { handlePartyText } = await import("./maintenance");
+      if (await handlePartyText(party, { body: input.body, channel: input.channel, providerMessageId: input.providerMessageId, media: input.media })) return;
+    }
     const { tryPair } = await import("./pairing");
     if (await tryPair(input.from, input.body)) {
       const owner = await getUserByPhone(input.from);

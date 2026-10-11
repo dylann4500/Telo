@@ -83,6 +83,8 @@ export function normalizeDialEvent(envelope: DialEnvelope): VoiceEvent[] {
           to: str(d.to),
           body: typeof d.body === "string" ? d.body : "",
           channel: str(d.channel) ?? "sms",
+          // Photos (MMS): Dial's inbound media URLs are public. Only the count goes to Keewano.
+          media: Array.isArray(d.media) ? (d.media as { url?: unknown }[]).map((m) => (typeof m?.url === "string" ? m.url : "")).filter(Boolean) : [],
         },
       ];
     case "message.status_changed":

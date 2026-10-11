@@ -58,7 +58,7 @@ export type VoiceEvent =
     }
   | { kind: "call.transcribed"; providerCallId: string }
   | { kind: "call.transcript_partial"; providerCallId: string; turns: TranscriptTurn[] }
-  | { kind: "message.received"; providerMessageId: string; from: string; to: string | null; body: string; channel: string }
+  | { kind: "message.received"; providerMessageId: string; from: string; to: string | null; body: string; channel: string; media?: string[] }
   | { kind: "message.status"; providerMessageId: string; deliveryState: string; error: string | null };
 
 /** SMS on a standard number allows 670 characters once any non-GSM character appears; keep text plain. */

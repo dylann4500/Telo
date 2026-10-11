@@ -40,7 +40,7 @@ export async function ingestVoiceEvent(e: VoiceEvent): Promise<void> {
     }
     case "message.received": {
       const { handleInboundText } = await import("../concierge");
-      await handleInboundText({ from: e.from, body: e.body, channel: e.channel, providerMessageId: e.providerMessageId });
+      await handleInboundText({ from: e.from, body: e.body, channel: e.channel, providerMessageId: e.providerMessageId, media: e.media });
       return;
     }
     case "message.status": {
