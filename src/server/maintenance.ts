@@ -202,9 +202,9 @@ async function callParty(input: { party: Party; taskId: string | null; body: str
 }
 
 /** On Telo's call with a tenant or owner: what they said is handled like their text, and Telo's reply comes back to be spoken. */
-export async function partySays(party: Party, callId: string, said: string, waitMs = 20_000): Promise<string> {
+export async function partySays(party: Party, call: Pick<CallRow, "id" | "taskId">, said: string, waitMs = 20_000): Promise<string> {
   const capture = { lines: [] as string[], closed: false, party: party.id };
-  const work = withVoiceCapture(capture, () => handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${callId}:${Date.now()}` })).catch((err) => {
+  const work = withVoiceCapture(capture, () => handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${call.id}:${Date.now()}`, onCall: call.taskId })).catch((err) => {
     console.error("[maintenance] couldn't take the answer", err);
   });
   await Promise.race([work, sleep(waitMs)]);
@@ -226,7 +226,7 @@ export async function partyCallFinished(call: CallRow): Promise<void> {
     .replace(/^(hello|hi|hey)\b[?.!,]*\s*/i, "")
     .trim();
   if (!said || /leave (a|your) message|voicemail|not available|after the (tone|beep)/i.test(said)) return;
-  await handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${call.id}:end` });
+  await handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${call.id}:end`, onCall: call.taskId });
 }
 
 async function storeInbound(party: Party, body: string, channel: string, providerMessageId: string | null, taskId: string | null): Promise<string | null> {
@@ -257,11 +257,11 @@ async function openWorkOrder(tenancyId: string): Promise<(TaskRow & { context: T
 }
 
 /** A text from someone in the portfolio who isn't the manager. Returns false if Telo doesn't know them. */
-export async function handlePartyText(party: Party, input: { body: string; channel: string; providerMessageId: string | null; media?: string[] }): Promise<boolean> {
+export async function handlePartyText(party: Party, input: { body: string; channel: string; providerMessageId: string | null; media?: string[]; onCall?: string | null }): Promise<boolean> {
   const media = input.media ?? [];
   switch (party.role) {
     case "tenant":
-      return tenantText(party, input.body, input.channel, input.providerMessageId, media);
+      return tenantText(party, input.body, input.channel, input.providerMessageId, media, input.onCall);
     case "owner":
       return ownerText(party, input.body, input.channel, input.providerMessageId);
     case "vendor":
@@ -272,15 +272,17 @@ export async function handlePartyText(party: Party, input: { body: string; chann
   }
 }
 
-async function tenantText(party: Party, body: string, channel: string, providerMessageId: string | null, media: string[]): Promise<boolean> {
+async function tenantText(party: Party, body: string, channel: string, providerMessageId: string | null, media: string[], onCall?: string | null): Promise<boolean> {
   const open = await openWorkOrder(party.id);
-  const stored = await storeInbound(party, body || (media.length ? `(${media.length} photo${media.length === 1 ? "" : "s"})` : ""), channel, providerMessageId, open?.id ?? null);
+  const stored = await storeInbound(party, body || (media.length ? `(${media.length} photo${media.length === 1 ? "" : "s"})` : ""), channel, providerMessageId, open?.id ?? onCall ?? null);
   if (!stored) return true; // a redelivered webhook
   if (containsSecret(body)) {
     await notifyParty({ party, taskId: open?.id, kind: "reply", body: "Please don't text passwords, PINs or card numbers. I never need them." });
     return true;
   }
   if (open) return tenantFollowUp(party, open, body, media);
+  // An answer on Telo's call about a job that has closed (safety steps for an emergency) is noted there, not a new job.
+  if (onCall !== undefined) return true;
   await startWorkOrder(party, body, channel === "voice" ? "voice" : channel === "email" ? "email" : "sms", media, stored);
   return true;
 }

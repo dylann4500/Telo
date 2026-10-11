@@ -54,6 +54,7 @@ beforeAll(async () => {
   const { SCENARIOS } = await import("../src/server/voice/mock-scenarios");
   SCENARIOS.unshift({ match: /priya shah/i, persona: () => answers("Yes, approve it. And get a replacement quote too."), script: () => "no_answer" });
   SCENARIOS.unshift({ match: /maria gomez/i, persona: (n) => answers(n === 1 ? "Yes, that works for me." : "Yes, it's fixed. Thanks!"), script: () => "no_answer" });
+  SCENARIOS.unshift({ match: /aisha rahman/i, persona: () => answers("Okay, I'm getting out now."), script: () => "no_answer" });
   await m.db.ensureDb();
   await (await import("../src/server/portfolio/history")).seedPortfolioHistory();
 });
@@ -99,4 +100,14 @@ describe("Telo calls the tenant and the owner", () => {
     msgs = await m.db.db.select().from(m.schema.messages).where(eq(m.schema.messages.taskId, task.id));
     expect(msgs.find((x) => x.party?.id === "ten_alder_b" && /Reply Y or N/.test(x.body))?.channel).toBe("voice");
   }, 60_000);
+
+  it("calls a tenant with safety steps, and their answer doesn't open another job", async () => {
+    await m.concierge.handleInboundText({ from: "+14155550123", body: "I smell gas in the kitchen, it's strong", channel: "sms", providerMessageId: "pc_gas", media: [] });
+    const task = await waitFor(async () => (await m.repo.listRecentTasks("usr_default", 10)).find((t) => t.context?.tenancy === "ten_pine_1"), "the emergency");
+    const call = await waitFor(async () => (await m.repo.listCalls(task.id)).find((c) => c.kind === "party_update" && c.finishedAt), "the safety call to finish");
+    expect(call.instructions).toMatch(/call 911/);
+    await waitFor(async () => (await m.db.db.select().from(m.schema.messages).where(eq(m.schema.messages.taskId, task.id))).some((x) => x.party?.id === "ten_pine_1" && x.direction === "in" && /getting out/.test(x.body)), "her answer on the emergency");
+    await new Promise((r) => setTimeout(r, 500));
+    expect((await m.repo.listRecentTasks("usr_default", 20)).filter((t) => t.context?.tenancy === "ten_pine_1")).toHaveLength(1);
+  }, 30_000);
 });

@@ -204,7 +204,7 @@ export async function callTool(name: string, args: Record<string, unknown>, head
       if (name === "get_status") return err("Not available on this call. Pass what they said to ask_telo.");
       const said = str(args.message);
       if (!said) return err("Pass what they said in `message`.");
-      return ok(await partySays(caller.party, caller.call.id, said));
+      return ok(await partySays(caller.party, caller.call, said));
     }
     if (caller?.kind !== "owner") return err("This tool is only for calls with the line's owner.");
     if (name === "get_status") return ok(await statusDigest(caller.user.id));
