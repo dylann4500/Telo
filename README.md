@@ -91,7 +91,7 @@ Each service switches from simulated to live when its keys are present. The dash
 
 ### 1. Claude
 
-Put `ANTHROPIC_API_KEY` in `.env.local`. Default model `claude-opus-5-5` (`TELO_MODEL` to change). All model output is schema-validated structured output; prose never drives task state.
+Put `ANTHROPIC_API_KEY` in `.env.local` and run `npm run llm:check`. `TELO_MODEL` (default here: `claude-sonnet-5-5`) runs the steps that drive actions: understanding, planning, reading calls, deciding, Keewano SQL. `TELO_MODEL_FAST` (`claude-haiku-5-5`) runs the quick, frequent ones: sorting each text, status replies, history summaries. All model output is schema-validated structured output; prose never drives task state. A Claude Max 5x/20x plan includes $100/$200 a month of API credits once you link a Console organization (claude.ai → Settings → Billing → API credits).
 
 ### 2. Dial: phone number, calls, texts
 
@@ -105,7 +105,7 @@ Put `ANTHROPIC_API_KEY` in `.env.local`. Default model `claude-opus-5-5` (`TELO_
    npm run dial:setup
    ```
    This picks Telo's number and saves `DIAL_NUMBER_ID` and `TELO_PHONE_NUMBER`. It also sets the number's inbound prompt, creates the account webhook and saves `DIAL_WEBHOOK_SECRET`, registers `/api/mcp` as a Context MCP with a bearer token, and reports account limits and texting status.
-4. Restart `npm run dev`. Text the number.
+4. Restart `npm run dev`. The dashboard shows a code: text `LINK <code>` from your phone to Telo's number to link it (or set `TELO_USER_PHONE`). Then text Telo anything.
 
 **Texting caveats (read before the demo):**
 - **US carriers block SMS *from* a standard number until it passes 10DLC registration** ($25, about 3–5 business days). Texts *to* Telo still arrive, and voice works both ways. Options: an iMessage number (no 10DLC, $250/month on Dial), a pre-approved number from Dial staff, or `TELO_USER_CHANNEL=voice` so Telo phones you with updates. Telo also falls back to calling you automatically when a text that needs you fails to deliver.
@@ -121,7 +121,7 @@ Put `ANTHROPIC_API_KEY` in `.env.local`. Default model `claude-opus-5-5` (`TELO_
    - `KEEWANO_PROJECT_ID`: Settings → Details.
    - `KEEWANO_PG_USER`: your Keewano login email.
 3. Run `npm run keewano:check` to register the event catalog, send a test event, and run a live SQL query.
-4. **Load the demo history at least 5 minutes before presenting.** Keewano takes about 5 minutes to make new events queryable. Telo merges its own recent writes in the meantime.
+4. **Load the demo history at least 30 minutes before presenting.** Keewano documents about 5 minutes before new events are queryable; on a fresh project it took 15–20. Telo merges its own writes from the last hour in the meantime.
 
 What Keewano does in Telo:
 - **Before every call**, Telo runs live SQL over the you × business stream and gives the call agent a brief built from what comes back: promises, offers, confirmation numbers, whether earlier promises were kept.

@@ -42,7 +42,12 @@ async function main() {
   const rel = entityUuid({ type: "relationship", id: `${userId}:comcast` });
   const commitments = await memory.sql(`SELECT event_datetime AS t, commitment_received AS kind FROM events WHERE user_id = '${rel}' ORDER BY t`).catch((e) => [{ error: (e as Error).message }]);
   console.log(`● Comcast   commitments on the demo relationship: ${JSON.stringify(commitments)}`);
-  console.log("\nKeewano is wired up. Seed the demo history (dashboard > Demo controls) at least 5 minutes before you present.");
+  // The read the call planner does: the whole user x Comcast timeline, rebuilt from Keewano.
+  const tl = await memory.timeline({ type: "relationship", id: `${userId}:comcast` }, { since: new Date(Date.now() - 365 * 86_400_000).toISOString() });
+  const fromKeewano = tl.events.filter((e) => e.source === "keewano");
+  console.log(`● Timeline  ${fromKeewano.length} events from Keewano (${tl.trace[0]?.ms} ms), ${tl.events.length - fromKeewano.length} from the recent-writes cache`);
+  for (const e of tl.events) console.log(`            ${e.occurredAt.slice(0, 16)} ${e.source === "keewano" ? "KW " : "loc"} ${e.summary}`);
+  console.log("\nKeewano is wired up. Seed the demo history (dashboard > Demo controls) at least 30 minutes before you present.");
 }
 
 main()

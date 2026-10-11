@@ -60,9 +60,9 @@ export const config = {
       pgPort: Number(env("KEEWANO_PG_PORT") ?? "27543"),
       ingestUrl: env("KEEWANO_INGEST_URL") ?? "https://api.keewano.com/event/ingress/v1/json",
       entityNamespace: env("TELO_ENTITY_NAMESPACE"), // secret UUID namespace for entity ids
-      // Events take ~5 minutes to become queryable; reads merge in our own
-      // recent writes for this long.
-      cacheMinutes: Number(env("KEEWANO_CACHE_MINUTES") ?? "15"),
+      // Keewano documents ~5 minutes before new events are queryable; we saw
+      // 15-20 on a new project. Reads merge in our own recent writes for this long.
+      cacheMinutes: Number(env("KEEWANO_CACHE_MINUTES") ?? "60"),
     },
   },
 

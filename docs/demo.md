@@ -7,9 +7,10 @@ About four minutes. What it shows: you hand off a phone task by text, Telo makes
 - [ ] `.env.local` has the Claude, Dial and Keewano keys, `TELO_USER_PHONE` (the presenter's phone) and `DEMO_TARGET_PHONE` (the teammate playing the businesses).
 - [ ] `npm run tunnel`, then `npm run dial:setup`, then restart `npm run dev`. All three chips in the dashboard header say **live**.
 - [ ] Dial credit is topped up, so calls aren't capped at 5 minutes.
-- [ ] **At least 5 minutes before going on:** Demo controls → **Load last week's Comcast call**, so Keewano has the backstory queryable.
+- [ ] **At least 30 minutes before going on:** Demo controls → **Load last week's Comcast call**. Keewano documents ~5 minutes before new events are queryable, but it took 15–20 on a fresh project.
 - [ ] `npm run keewano:check` shows the Comcast commitment.
-- [ ] Text Telo once from the presenter's phone so the thread exists (iMessage numbers limit messages to people who haven't replied yet).
+- [ ] The presenter's phone is linked: text `LINK <code>` (shown in the dashboard) to Telo's number.
+- [ ] Texting replies: until the number's 10DLC registration clears, Telo's SMS replies to US phones are blocked. Telo phones you instead for anything that needs you (questions, approvals, results), and every reply shows in the dashboard thread. For status, call Telo.
 - [ ] The teammate has the scripts below. They answer as the business.
 
 ## 1. Memory (the headline)
