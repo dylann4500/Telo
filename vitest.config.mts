@@ -9,6 +9,7 @@ export default defineConfig({
     testTimeout: 30_000,
     pool: "forks",
     // Never touch the dev database; the flow test points at its own temp file.
-    env: { DATABASE_URL: "file:./data/test-units.db", LLM_PROVIDER: "mock", VOICE_PROVIDER: "mock", MEMORY_PROVIDER: "local" },
+    // Google off unless a test asks for the simulated inbox or calendar: never the real account.
+    env: { DATABASE_URL: "file:./data/test-units.db", LLM_PROVIDER: "mock", VOICE_PROVIDER: "mock", MEMORY_PROVIDER: "local", MAIL_PROVIDER: "off", CALENDAR_PROVIDER: "off" },
   },
 });

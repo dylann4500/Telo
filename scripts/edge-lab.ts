@@ -23,7 +23,10 @@ process.env.VOICE_PROVIDER = "mock";
 process.env.MEMORY_PROVIDER = "local";
 process.env.MOCK_CALL_SPEED = "30";
 process.env.TELO_USER_NAME = "Dylan";
-for (const k of ["DIAL_API_KEY", "DIAL_NUMBER_ID", "DEMO_TARGET_PHONE", "TELO_USER_PHONE", "KEEWANO_API_KEY", "TELO_DIRECTORY"]) delete process.env[k];
+// Never the real Google account: a lab run once put its test bookings on the real calendar.
+process.env.MAIL_PROVIDER = "off";
+process.env.CALENDAR_PROVIDER = "mock";
+for (const k of ["DIAL_API_KEY", "DIAL_NUMBER_ID", "DEMO_TARGET_PHONE", "TELO_USER_PHONE", "KEEWANO_API_KEY", "TELO_DIRECTORY", "GOOGLE_REFRESH_TOKEN", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]) delete process.env[k];
 
 type Turn = { speaker: "agent" | "other"; text: string };
 type Persona = (callNumber: number) => string | Turn[] | null;

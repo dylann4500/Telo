@@ -27,7 +27,7 @@ process.env.MOCK_CALL_SPEED = "20";
 process.env.TELO_USER_NAME = "Dylan";
 process.env.TELO_LIVE_POLL_SECONDS ??= "8";
 process.env.TELO_LIVE_WAIT_SECONDS ??= "40";
-for (const k of ["DIAL_API_KEY", "DIAL_NUMBER_ID", "DEMO_TARGET_PHONE", "TELO_USER_PHONE", "KEEWANO_API_KEY", "TELO_DIRECTORY", "GOOGLE_REFRESH_TOKEN"]) delete process.env[k];
+for (const k of ["DIAL_API_KEY", "DIAL_NUMBER_ID", "DEMO_TARGET_PHONE", "TELO_USER_PHONE", "KEEWANO_API_KEY", "TELO_DIRECTORY", "GOOGLE_REFRESH_TOKEN", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]) delete process.env[k];
 
 const TZ = "America/Los_Angeles";
 
