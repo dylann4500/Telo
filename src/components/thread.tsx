@@ -10,11 +10,12 @@ import { post } from "./api";
 // thread the user has on their phone when they text Telo's number. Messages
 // typed here go through the same pipeline as a real text.
 
+// The manager's side: questions about the portfolio, answered from Keewano.
 const SUGGESTIONS = [
-  "Cancel my gym membership at Equinox",
-  "My bill is wrong again. Can you call them and figure it out?",
-  "Call three windshield repair shops and find one that can do tomorrow under $400",
-  "Book a table for 5 at Nopa around 7:30 tonight",
+  "Which vendor no-shows most?",
+  "What does a water-heater replacement usually cost us?",
+  "Which unit cost the most in repairs this year?",
+  "How long do owners take to approve?",
 ];
 
 const GAP_MS = 20 * 60_000;
@@ -97,9 +98,9 @@ export function Thread({
       <div className="scroll-thin flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 && (
           <div className="mx-auto mt-4 max-w-sm px-2 text-center">
-            <p className="text-[15px] font-semibold">Hand off anything that needs a phone call.</p>
+            <p className="text-[15px] font-semibold">Tenants call or text Telo. You supervise here.</p>
             <p className="mt-1 text-[13px] text-im-meta">
-              {teloPhone ? `Text ${teloPhone} from your phone, or type below.` : "Type a request the way you'd text it."} Telo asks only what it needs, makes the call, and texts you back.
+              {teloPhone ? `Text ${teloPhone} from your phone, or type below.` : "Type below the way you'd text it."} Telo texts you when a work order opens or gets booked, and answers questions about your portfolio from its memory.
             </p>
             <div className="mt-4 flex flex-col gap-2">
               {SUGGESTIONS.map((s) => (

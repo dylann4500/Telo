@@ -22,6 +22,7 @@ The seeded portfolio (`src/server/portfolio/data.ts`) has two owners, three prop
 - [ ] `npm run tunnel`, then `npm run dial:setup`, then restart `npm run dev`. The header chips say **live**.
 - [ ] Dial credit topped up. Two vendor calls run at once, and a free account allows only two. A call costs about $0.22 a minute.
 - [ ] The portfolio's history is in Keewano at least 30 minutes before going on: `npm run seed:portfolio` (safe to run twice). It was loaded at 12:46 PM on demo day and checked queryable by 1:05.
+- [ ] `npm run keewano:check` shows the HVAC ranking "from keewano" (CoolBreeze last, with 2 no-shows) and Unit B's two AC repairs.
 - [ ] Updates on **Text + call** in the thread header. Until the number's 10DLC registration clears, Telo's texts to US phones may be blocked, so test texting to each cast phone first. Every message also shows on the dashboard.
 - [ ] A quiet room for the vendor teammates (Dial's agent stops talking at background noise).
 

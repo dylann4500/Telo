@@ -4,7 +4,8 @@ loadEnv({ path: [".env.local", ".env"], quiet: true });
 // npm run keewano:check: proves the Keewano setup end to end.
 //   1. registers Telo's event catalog (idempotent)
 //   2. writes one test event to a throwaway entity
-//   3. runs live SQL: the project's event count, and Telo's relationship streams
+//   3. runs live SQL: the project's event count and entity kinds, the HVAC vendor
+//      ranking and Unit B's AC repairs (the reads a work order makes)
 // New events take ~5 minutes to become queryable, so step 3 may not see step 2 yet.
 
 async function main() {
@@ -38,16 +39,14 @@ async function main() {
   console.log(`● SQL       ${JSON.stringify(total[0])} (${Date.now() - t0} ms)`);
   const kinds = await memory.sql("SELECT entity_kind, count(DISTINCT user_id) AS n FROM events GROUP BY entity_kind LIMIT 10").catch((e) => [{ error: (e as Error).message }]);
   console.log(`● Entities  ${JSON.stringify(kinds)}`);
-  const userId = "usr_default";
-  const rel = entityUuid({ type: "relationship", id: `${userId}:comcast` });
-  const commitments = await memory.sql(`SELECT event_datetime AS t, commitment_received AS kind FROM events WHERE user_id = '${rel}' ORDER BY t`).catch((e) => [{ error: (e as Error).message }]);
-  console.log(`● Comcast   commitments on the demo relationship: ${JSON.stringify(commitments)}`);
-  // The read the call planner does: the whole user x Comcast timeline, rebuilt from Keewano.
-  const tl = await memory.timeline({ type: "relationship", id: `${userId}:comcast` }, { since: new Date(Date.now() - 365 * 86_400_000).toISOString() });
-  const fromKeewano = tl.events.filter((e) => e.source === "keewano");
-  console.log(`● Timeline  ${fromKeewano.length} events from Keewano (${tl.trace[0]?.ms} ms), ${tl.events.length - fromKeewano.length} from the recent-writes cache`);
-  for (const e of tl.events) console.log(`            ${e.occurredAt.slice(0, 16)} ${e.source === "keewano" ? "KW " : "loc"} ${e.summary}`);
-  console.log("\nKeewano is wired up. Seed the demo history (dashboard > Demo controls) at least 30 minutes before you present.");
+  // The portfolio's history (npm run seed:portfolio): the reads the work orders make.
+  const { rankVendors, assetHistory } = await import("../src/server/portfolio/insights");
+  const ranking = await rankVendors("hvac");
+  console.log(`● Vendors   HVAC ranking from ${ranking.source} (${ranking.trace[0]?.ms ?? 0} ms):`);
+  for (const s of ranking.value) console.log(`            ${s.vendor.name}: ${s.visits} visits, ${s.noShows} no-shows, ${s.late} late, ${s.firstFix}/${s.jobs} fixed first visit`);
+  const ac = await assetHistory("ast_alder_b_ac");
+  console.log(`● Unit B AC ${ac.value.repairs.length} repairs in the past year from ${ac.source}: ${ac.value.repairs.map((r) => `${r.at.slice(0, 10)} $${r.cents / 100}`).join(", ") || "none yet"}`);
+  console.log("\nKeewano is wired up. Load the portfolio's history (npm run seed:portfolio) at least 30 minutes before you present.");
 }
 
 main()
