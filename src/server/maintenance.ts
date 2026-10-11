@@ -9,12 +9,12 @@ import { TERMINAL_STATUSES } from "./domain/types";
 import { newId } from "./ids";
 import { recordEvent } from "./memory/events";
 import { notify } from "./notify";
-import { addWorkOrderToCalendar, advance, finalizeTask, kick } from "./orchestrator";
+import { addWorkOrderToCalendar, advance, callbackTime, finalizeTask, kick, scheduleWorkOrder } from "./orchestrator";
 import { assetFor, assetLabel, FIRM, getAsset, getOwner, getTenancy, getUnit, getVendor, homeOf, isFictional, vendorByName, type Party } from "./portfolio";
 import { assetHistory, rankVendors, shouldQuoteReplacement, type Scorecard } from "./portfolio/insights";
 import { containsSecret, maskSecrets } from "./redact";
 import { callIsLive, getTask, getUser, listCalls, patchTask, transitionTask } from "./tasks/repo";
-import { nowContext, windowLabel } from "./time";
+import { clampToCallingHours, formatWhen, nowContext, windowLabel } from "./time";
 import { getVoice } from "./voice";
 
 // Property management: maintenance work orders, end to end.
@@ -34,6 +34,7 @@ const firstName = (name: string) => name.split(" ")[0];
 const usd = (cents: number) => `$${Math.round(cents / 100).toLocaleString("en-US")}`;
 const YES = /^\s*(y|yes|yeah|yep|yup|ok|okay|sure|confirm(ed)?|correct|fixed|all good|works?( now)?|it'?s (fixed|working|good))\b/i;
 const NO = /^\s*(n|no|nope|not (yet|fixed|really)|still (broken|not)|didn'?t|doesn'?t|it'?s not)\b/i;
+const NO_SHOW = /\b(never (came|showed|arrived)|didn'?t (come|show|arrive)|did not (come|show|arrive)|no ?one (came|showed)|nobody (came|showed|ever)|no[- ]show|hasn'?t (come|shown|arrived)|not here yet|still waiting)\b/i;
 
 function refsOf(ctx: TaskContext, extra: EntityRefs = {}): EntityRefs {
   const { owner, property, unit, asset, tenancy } = ctx;
@@ -219,6 +220,10 @@ async function tenantFollowUp(party: Party, task: TaskRow & { context: TaskConte
       await notifyParty({ party, taskId: task.id, kind: "reply", body: `Got ${media.length === 1 ? "the photo" : "the photos"}, thanks. I'll pass ${media.length === 1 ? "it" : "them"} to the vendor.`, dedupeKey: `photos:${task.id}:${have + media.length}` });
       return true;
     }
+  }
+  if ((ctx.stage === "checking" || ctx.stage === "booked") && ctx.booked && NO_SHOW.test(body)) {
+    await vendorNoShow(task);
+    return true;
   }
   if (ctx.stage === "checking" && (YES.test(body) || NO.test(body))) {
     await closeWorkOrder(task, YES.test(body) && !NO.test(body));
@@ -517,8 +522,15 @@ export async function afterCalls(task: TaskRow & { context: TaskContext }): Prom
     }
   }
 
+  // This round: the calls placed together most recently (a callback round is just one call).
+  const newest = Math.max(...business.map((c) => c.createdAt.getTime()));
+  const round = business.filter((c) => newest - c.createdAt.getTime() < 5_000);
+
   // Booked on the call: a time agreed, and within the limit or approved by the owner while they held.
-  const booked = business.find((c) => {
+  // The newest booking wins, and never one that already fell through.
+  const voided = new Set(ctx.voided ?? []);
+  const booked = [...round].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).find((c) => {
+    if (voided.has(c.id)) return false;
     const price = priceOf(c);
     return c.analysis!.booking && ["success", "partial"].includes(c.analysis!.outcome) && (price == null || price <= limitCents || ownerApproved(c.id));
   });
@@ -540,8 +552,95 @@ export async function afterCalls(task: TaskRow & { context: TaskContext }): Prom
     return Boolean(moved);
   }
 
-  // Nobody could book on the call: give the manager the comparison.
+  const tz = user.timezone;
+  const unitLabel = getUnit(ctx.unit)?.label ?? "the unit";
   const quotes = business.map((c) => ({ c, v: vendorForCall(c), price: priceOf(c) })).filter((x) => x.v && x.price != null);
+  const quoteLine = (exclude?: string) =>
+    quotes
+      .filter((x) => x.v!.name !== exclude)
+      .map((x) => `${x.v!.name} quoted ${usd(x.price!)}${x.c.analysis?.quote?.availability ? ` (${x.c.analysis.quote.availability})` : ""}.`)
+      .join(" ");
+  const placed = business.filter((c) => c.direction === "outbound").length;
+  const tenant = tenantParty(ctx.tenancy);
+
+  // What each vendor said last: a callback they asked for ("call us back in three days") stands until
+  // Telo calls them again, so a vendor who keeps saying "try us again Thursday" keeps getting called.
+  const spoke = (c: CallRow) => c.transcript.some((t) => t.speaker === "other");
+  const unreached = (c: CallRow) => ["no_answer", "voicemail"].includes(c.analysis!.outcome) || (c.analysis!.outcome === "failed" && !spoke(c));
+  const asked = (c: CallRow) => c.analysis!.outcome === "callback_required" || Boolean(c.analysis!.callbackAt) || c.analysis!.commitments.some((x) => x.kind === "callback");
+  const last = new Map<string, CallRow>();
+  for (const c of [...business].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())) last.set(c.targetName.toLowerCase(), c);
+  const pending = [...last.values()].filter(asked).map((c) => ({ c, at: callbackTime(c.analysis!.callbackAt, tz).at })).sort((a, b) => a.at.getTime() - b.at.getTime());
+  const soonest = pending[0];
+  const room = placed < config.calls.maxCallsPerTask;
+  // An urgent job doesn't wait more than a day on one vendor's callback while another might come sooner.
+  const urgent = ctx.severity === "emergency" || ctx.severity === "urgent";
+  const waitOk = Boolean(soonest) && (!urgent || soonest.at.getTime() - Date.now() <= 24 * 3600_000);
+  const called = new Set(business.map((c) => vendorForCall(c)?.id).filter(Boolean));
+  const next = room ? (ctx.ranked ?? []).map((id) => getVendor(id)).find((v) => v && !called.has(v.id)) : undefined;
+
+  if (round.length && round.every((c) => unreached(c) || asked(c))) {
+    // Nobody in this round could take it. Waiting isn't good enough: the next vendor in Keewano's ranking, now.
+    if (next && !waitOk) {
+      const why = soonest
+        ? `${soonest.c.targetName} asked me to call back ${formatWhen(soonest.at, tz)}, but this shouldn't wait that long, so I'm calling ${next.name} now.`
+        : `${round.map((c) => c.targetName).join(" and ")} didn't pick up, so I'm calling ${next.name}.`;
+      const moved = await transitionTask(
+        task.id,
+        "planning",
+        {
+          targets: [...task.targets.filter((t) => t.name !== next.name), { name: next.name, phone: next.phone, kind: "business" as const }],
+          followUp: { reason: "callback", userDecision: task.followUp?.userDecision ?? null, callback: { targetName: next.name, purpose: "Earliest visit and price", objective: task.goal ?? "Find the earliest visit and price", talkingPoints: [] } },
+          statusDetail: `Calling ${next.name}`,
+        },
+        ["reviewing"],
+      );
+      if (moved) await notify({ userId: task.userId, taskId: task.id, kind: "update", body: `${unitLabel}: ${why}`, dedupeKey: `next:${task.id}:${next.id}` });
+      return Boolean(moved);
+    }
+    // A vendor asked to be called back: Telo calls them then (days out is fine), inside calling hours.
+    if (soonest && room) {
+      const { c: ask, at } = soonest;
+      const when = formatWhen(at, tz);
+      if (tenant) await notifyParty({ party: tenant, taskId: task.id, kind: "update", body: `Still lining up a vendor for you. ${ask.targetName} asked me to call back ${when}, and I'll text you as soon as it's booked.`, dedupeKey: `cbk:${ask.id}` });
+      const times = business.filter((c) => c.targetName === ask.targetName && asked(c)).length;
+      return scheduleWorkOrder(
+        task,
+        at,
+        {
+          reason: "callback",
+          userDecision: task.followUp?.userDecision ?? null,
+          callback: { targetName: ask.targetName, purpose: "Call back to book, as they asked", objective: `${task.goal ?? ""} They asked to be called back now: book the earliest visit within the limit.`.trim(), talkingPoints: [ask.analysis!.nextStep || "You asked us to call back", "Book the earliest visit"] },
+        },
+        {
+          detail: `Calling ${ask.targetName} back ${formatWhen(at, tz, { absolute: true })}`,
+          message: `${ask.targetName} asked me to call back ${when} about ${unitLabel}${times > 1 ? ` (the ${ordinal(times)} time they've asked)` : ""}, so I'll call them then. ${quoteLine(ask.targetName)}`.trim(),
+          summary: `${ask.targetName} asked for a callback ${formatWhen(at, tz, { absolute: true })}`,
+          orgKey: task.orgKey,
+          kind: "report",
+        },
+      );
+    }
+    // Nobody picked up and nobody's left to try: the same vendor again in a while.
+    const first = round[0];
+    const tries = business.filter((c) => c.targetName === first.targetName && unreached(c)).length;
+    if (round.every(unreached) && room && tries < config.calls.maxAttemptsPerLeg) {
+      const at = clampToCallingHours(new Date(Date.now() + config.calls.retryMinutes * 60_000), tz);
+      return scheduleWorkOrder(
+        task,
+        at,
+        { reason: "callback", userDecision: task.followUp?.userDecision ?? null, callback: { targetName: first.targetName, purpose: "Try again: earliest visit and price", objective: task.goal ?? "Find the earliest visit and price", talkingPoints: [] } },
+        {
+          detail: `Trying ${first.targetName} again ${formatWhen(at, tz, { absolute: true })}`,
+          message: `None of the vendors picked up for ${unitLabel}. I'll try ${first.targetName} again ${formatWhen(at, tz)}.`,
+          summary: `No vendor answered; trying ${first.targetName} again`,
+          orgKey: task.orgKey,
+        },
+      );
+    }
+  }
+
+  // Nobody could book on the call: give the manager the comparison.
   const options: ApprovalOption[] = [...quotes.map((x) => ({ id: `book_${x.v!.id}`, label: `Book ${x.v!.name} (${usd(x.price!)})` })), { id: "handle", label: "I'll handle it" }];
   const summary = quotes.length
     ? quotes.map((x) => `${x.v!.name}: ${usd(x.price!)}${x.c.analysis?.quote?.availability ? `, ${x.c.analysis.quote.availability}` : ""}`).join("; ")
@@ -584,8 +683,8 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
   const window = startsAt ? windowLabel(startsAt, endsAt, tz) : "soon (they'll confirm the time)";
   const refs = refsOf(ctx, { vendor: vendor.id });
 
-  await recordEvent({ id: `evt_booked_${task.id}`, userId: task.userId, taskId: task.id, callId: call.id, type: "vendor.booked", summary: `Booked ${vendor.name}: ${usd(cents)}, ${window}${confirmation ? ` (confirmation ${confirmation})` : ""}`, typed: { trade: ctx.trade, dispatchRank: rank, bookedCents: cents }, refs });
-  await recordEvent({ id: `evt_arrival_${task.id}`, userId: task.userId, taskId: task.id, callId: call.id, type: "commitment.received", summary: `${vendor.name} promised to arrive ${window}`, typed: { commitmentKind: "arrival", dueAt: startsAt?.toISOString() }, refs });
+  await recordEvent({ id: `evt_booked_${call.id}`, userId: task.userId, taskId: task.id, callId: call.id, type: "vendor.booked", summary: `Booked ${vendor.name}: ${usd(cents)}, ${window}${confirmation ? ` (confirmation ${confirmation})` : ""}`, typed: { trade: ctx.trade, dispatchRank: rank, bookedCents: cents }, refs });
+  await recordEvent({ id: `evt_arrival_${call.id}`, userId: task.userId, taskId: task.id, callId: call.id, type: "commitment.received", summary: `${vendor.name} promised to arrive ${window}`, typed: { commitmentKind: "arrival", dueAt: startsAt?.toISOString() }, refs });
 
   // The others get a polite no.
   for (const other of (await listCalls(task.id)).filter((c) => c.kind === "business" && c.id !== call.id && c.analysis && !["no_answer", "voicemail", "failed"].includes(c.analysis.outcome))) {
@@ -612,12 +711,12 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
   // "AC not cooling" keeps its capitals; "Leak under the sink" reads "leak under the sink".
   const issue = ctx.issue ? ` (${/^[A-Z]{2}/.test(ctx.issue) ? ctx.issue : ctx.issue.charAt(0).toLowerCase() + ctx.issue.slice(1)})` : "";
   const notice = `${vendor.name} is coming ${window} to fix the problem you reported${issue}. This is your notice of entry for the repair at ${unit.label}.${consent ? " That's less than 24 hours away, so reply YES if it's OK for them to come in then." : ""}`;
-  await notifyParty({ party: tenant, taskId: task.id, kind: "notice", body: notice, dedupeKey: `notice:${task.id}` });
-  await recordEvent({ id: `evt_notice_${task.id}`, userId: task.userId, taskId: task.id, type: "entry_notice.sent", summary: `Entry notice sent to ${firstName(tenant.name)} (${hours} h ahead)`, data: { text: notice, sentAt: new Date().toISOString() }, typed: { noticePurpose: "repair", noticeHours: hours, noticeMethod: "sms" }, refs: refsOf(ctx) });
+  await notifyParty({ party: tenant, taskId: task.id, kind: "notice", body: notice, dedupeKey: `notice:${call.id}` });
+  await recordEvent({ id: `evt_notice_${call.id}`, userId: task.userId, taskId: task.id, type: "entry_notice.sent", summary: `Entry notice sent to ${firstName(tenant.name)} (${hours} h ahead)`, data: { text: notice, sentAt: new Date().toISOString() }, typed: { noticePurpose: "repair", noticeHours: hours, noticeMethod: "sms" }, refs: refsOf(ctx) });
 
   const owner = ownerParty(ctx.owner);
   if (owner && ownerApproved) {
-    await notifyParty({ party: owner, taskId: task.id, kind: "update", body: `Booked ${vendor.name} for ${unit.label} ${window}, ${usd(cents)}${confirmation ? ` (confirmation ${confirmation})` : ""}.${ctx.replaceQuote ? " The tech will price a replacement too." : ""}`, dedupeKey: `owner-booked:${task.id}` });
+    await notifyParty({ party: owner, taskId: task.id, kind: "update", body: `Booked ${vendor.name} for ${unit.label} ${window}, ${usd(cents)}${confirmation ? ` (confirmation ${confirmation})` : ""}.${ctx.replaceQuote ? " The tech will price a replacement too." : ""}`, dedupeKey: `owner-booked:${call.id}` });
   }
 
   // Parked until the visit: "on the way?" 30 minutes into the window.
@@ -628,7 +727,7 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
     {
       wakeAt: checkAt,
       followUp: null,
-      context: { ...ctx, stage: "booked", booked: { vendor: vendor.id, cents, startsAt: startsAt?.toISOString() ?? null, endsAt: endsAt?.toISOString() ?? null, confirmation, ownerApproved } },
+      context: { ...ctx, stage: "booked", accessConfirmed: false, booked: { vendor: vendor.id, callId: call.id, cents, startsAt: startsAt?.toISOString() ?? null, endsAt: endsAt?.toISOString() ?? null, confirmation, ownerApproved } },
       statusDetail: `${vendor.name} booked ${window}`,
     },
     ["reviewing"],
@@ -641,7 +740,7 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
     taskId: task.id,
     kind: "report",
     body: `Booked ${vendor.name} for ${unit.label} ${window} at ${usd(cents)}${ownerApproved ? `, approved by ${owner ? firstName(owner.name) : "the owner"} while they held` : ""}. ${firstName(tenant.name)} has the time and the entry notice.${onCalendar}`,
-    dedupeKey: `booked:${task.id}`,
+    dedupeKey: `booked:${call.id}`,
   });
   return false;
 }
@@ -655,13 +754,13 @@ export async function wake(task: TaskRow & { context: TaskContext }): Promise<bo
   const tenant = tenantParty(ctx.tenancy);
   const unit = getUnit(ctx.unit);
   if (ctx.stage === "booked") {
-    if (vendor) await notifyParty({ party: vendor, taskId: task.id, kind: "check", body: `Hi, Telo for ${FIRM.name}: is your tech on the way to ${unit?.label}?`, dedupeKey: `otw:${task.id}` });
-    if (tenant) await notifyParty({ party: tenant, taskId: task.id, kind: "check", body: `Hi ${firstName(tenant.name)}, did ${vendor?.name ?? "the vendor"} come and fix it? Reply Y or N.`, dedupeKey: `fixed?:${task.id}` });
+    if (vendor) await notifyParty({ party: vendor, taskId: task.id, kind: "check", body: `Hi, Telo for ${FIRM.name}: is your tech on the way to ${unit?.label}?`, dedupeKey: `otw:${ctx.booked?.callId ?? task.id}` });
+    if (tenant) await notifyParty({ party: tenant, taskId: task.id, kind: "check", body: `Hi ${firstName(tenant.name)}, did ${vendor?.name ?? "the vendor"} come and fix it? Reply Y or N.`, dedupeKey: `fixed?:${ctx.booked?.callId ?? task.id}` });
     await patchTask(task.id, { context: { ...ctx, stage: "checking" }, wakeAt: new Date(Date.now() + 6 * 3600_000), statusDetail: `Checking with ${tenant ? firstName(tenant.name) : "the tenant"} that it's fixed` }, ["scheduled"]);
     return false;
   }
   if (ctx.stage === "checking") {
-    if (tenant) await notifyParty({ party: tenant, taskId: task.id, kind: "check", body: `Just checking: is it fixed? Reply Y or N.`, dedupeKey: `fixed?2:${task.id}` });
+    if (tenant) await notifyParty({ party: tenant, taskId: task.id, kind: "check", body: `Just checking: is it fixed? Reply Y or N.`, dedupeKey: `fixed?2:${ctx.booked?.callId ?? task.id}` });
     await patchTask(task.id, { wakeAt: new Date(Date.now() + 24 * 3600_000) }, ["scheduled"]);
     return false;
   }
@@ -675,13 +774,13 @@ export async function closeWorkOrder(task: TaskRow & { context: TaskContext }, f
   const tenant = tenantParty(ctx.tenancy)!;
   const unit = getUnit(ctx.unit)!;
   if (!fixed) {
-    await notifyParty({ party: tenant, taskId: task.id, kind: "reply", body: `Sorry about that. I'm calling ${vendor?.name ?? "the vendor"} back now.`, dedupeKey: `notfixed:${task.id}` });
+    await notifyParty({ party: tenant, taskId: task.id, kind: "reply", body: `Sorry about that. I'm calling ${vendor?.name ?? "the vendor"} back now.`, dedupeKey: `notfixed:${ctx.booked?.callId ?? task.id}` });
     const moved = await transitionTask(
       task.id,
       "planning",
       {
         wakeAt: null,
-        context: { ...ctx, stage: "dispatching" },
+        context: { ...ctx, stage: "dispatching", voided: [...(ctx.voided ?? []), ...(ctx.booked?.callId ? [ctx.booked.callId] : [])] },
         followUp: { reason: "callback", userDecision: null, callback: { targetName: vendor?.name ?? task.targets[0]?.name ?? "the vendor", purpose: "The repair didn't hold", objective: `The tenant at ${unit.label} says it still isn't fixed. Get the tech back out as soon as possible, under the original job, and get the arrival window.`, talkingPoints: ["The problem is back after the visit", "Ask them to come back under the same job"] } },
         statusDetail: `Not fixed: calling ${vendor?.name ?? "the vendor"} back`,
       },
@@ -692,14 +791,15 @@ export async function closeWorkOrder(task: TaskRow & { context: TaskContext }, f
   }
   const refs = refsOf(ctx, vendor ? { vendor: vendor.id } : {});
   const cents = ctx.booked?.cents ?? 0;
-  await recordEvent({ id: `evt_vo_${task.id}`, userId: task.userId, taskId: task.id, type: "vendor.outcome", summary: `${vendor?.name}: on time`, typed: { vendorOutcome: "on_time", lateMinutes: 0 }, refs });
-  await recordEvent({ id: `evt_kept_${task.id}`, userId: task.userId, taskId: task.id, type: "commitment.fulfilled", summary: `${vendor?.name} kept their arrival promise`, typed: { commitmentKind: "arrival", commitmentLateMinutes: 0 }, refs });
-  await recordEvent({ id: `evt_access_${task.id}`, userId: task.userId, taskId: task.id, type: "access.outcome", summary: `Access at ${unit.label}: done`, typed: { accessOutcome: "done", reschedules: 0 }, refs: refsOf(ctx) });
+  const key = ctx.booked?.callId ?? task.id;
+  await recordEvent({ id: `evt_vo_${key}`, userId: task.userId, taskId: task.id, type: "vendor.outcome", summary: `${vendor?.name}: on time`, typed: { vendorOutcome: "on_time", lateMinutes: 0 }, refs });
+  await recordEvent({ id: `evt_kept_${key}`, userId: task.userId, taskId: task.id, type: "commitment.fulfilled", summary: `${vendor?.name} kept their arrival promise`, typed: { commitmentKind: "arrival", commitmentLateMinutes: 0 }, refs });
+  await recordEvent({ id: `evt_access_${key}`, userId: task.userId, taskId: task.id, type: "access.outcome", summary: `Access at ${unit.label}: done`, typed: { accessOutcome: "done", reschedules: 0 }, refs: refsOf(ctx) });
   const asset = getAsset(ctx.asset);
   if (asset) {
     const prior = await assetHistory(asset.id);
     const last = prior.value.repairs.at(-1);
-    await recordEvent({ id: `evt_repair_${task.id}`, userId: task.userId, taskId: task.id, type: "asset.repaired", summary: `Repaired the ${assetLabel(asset.type)} at ${unit.label}: ${usd(cents)}`, typed: { assetType: asset.type, repairCents: cents, repeatWithin90d: Boolean(last && Date.now() - Date.parse(last.at) < 90 * 86_400_000) }, refs: { asset: asset.id, unit: unit.id, owner: ctx.owner } });
+    await recordEvent({ id: `evt_repair_${key}`, userId: task.userId, taskId: task.id, type: "asset.repaired", summary: `Repaired the ${assetLabel(asset.type)} at ${unit.label}: ${usd(cents)}`, typed: { assetType: asset.type, repairCents: cents, repeatWithin90d: Boolean(last && Date.now() - Date.parse(last.at) < 90 * 86_400_000) }, refs: { asset: asset.id, unit: unit.id, owner: ctx.owner } });
   }
   // How often the manager had to act on this work order: the "after" number next to the seeded "before".
   const touches = (await db.select({ id: messages.id }).from(messages).where(and(eq(messages.taskId, task.id), eq(messages.direction, "in"), isNull(messages.party)))).length;
@@ -723,6 +823,44 @@ export async function closeWorkOrder(task: TaskRow & { context: TaskContext }, f
     { outcome: "success", summary: `${vendor?.name} fixed it; ${firstName(tenant.name)} confirmed. ${usd(cents)}.`, confirmation: ctx.booked?.confirmation ?? null },
     `Closed: ${task.title}. ${vendor?.name} kept their arrival promise and ${firstName(tenant.name)} confirmed it's fixed.${touches === 0 ? " You didn't have to step in." : ""}`,
   );
+}
+
+/** The booked vendor never came: their record shows it (Keewano learns), and the next vendor in the ranking is called. */
+export async function vendorNoShow(task: TaskRow & { context: TaskContext }): Promise<void> {
+  const ctx = task.context;
+  const booked = ctx.booked!;
+  const vendor = getVendor(booked.vendor);
+  const key = booked.callId ?? task.id;
+  const unit = getUnit(ctx.unit);
+  const refs = refsOf(ctx, vendor ? { vendor: vendor.id } : {});
+  await recordEvent({ id: `evt_noshow_${key}`, userId: task.userId, taskId: task.id, type: "vendor.outcome", summary: `${vendor?.name}: no-show`, typed: { vendorOutcome: "no_show", lateMinutes: 0 }, refs });
+  await recordEvent({ id: `evt_broken_${key}`, userId: task.userId, taskId: task.id, type: "commitment.broken", summary: `${vendor?.name} broke their arrival promise`, typed: { commitmentKind: "arrival" }, refs });
+  const tenant = tenantParty(ctx.tenancy);
+  const tried = new Set((await listCalls(task.id)).filter((c) => c.kind === "business").map((c) => vendorForCall(c)?.id));
+  const others = (ctx.ranked ?? []).map((id) => getVendor(id)).filter((v): v is NonNullable<typeof v> => Boolean(v) && v!.id !== booked.vendor);
+  const next = others.find((v) => !tried.has(v.id)) ?? others[0];
+  if (!next) {
+    if (tenant) await notifyParty({ party: tenant, taskId: task.id, kind: "reply", body: `Sorry, I've noted they didn't show. The manager will get someone out to you.`, dedupeKey: `noshow:${key}` });
+    const moved = await transitionTask(task.id, "reviewing", { context: { ...ctx, stage: "closed" }, wakeAt: null, statusDetail: "The vendor didn't show" }, ["scheduled"]);
+    if (moved) await finalizeTask(task.id, "failed", { outcome: "failed", summary: `${vendor?.name} didn't show, and there's no other approved vendor.`, confirmation: null }, `${vendor?.name} didn't show at ${unit?.label}, and there's no other approved vendor for this trade. Over to you.`);
+    return;
+  }
+  if (tenant) await notifyParty({ party: tenant, taskId: task.id, kind: "reply", body: `Sorry ${firstName(tenant.name)}, I've noted that ${vendor?.name} didn't show. I'm getting ${next.name} out to you now.`, dedupeKey: `noshow:${key}` });
+  const moved = await transitionTask(
+    task.id,
+    "planning",
+    {
+      wakeAt: null,
+      targets: [...task.targets.filter((t) => t.name !== next.name), { name: next.name, phone: next.phone, kind: "business" as const }],
+      context: { ...ctx, stage: "dispatching", booked: undefined, accessConfirmed: false, voided: [...(ctx.voided ?? []), key] },
+      followUp: { reason: "callback", userDecision: null, callback: { targetName: next.name, purpose: "Earliest visit and price: the booked vendor didn't show", objective: `${task.goal ?? ""} The vendor we booked didn't show, so get the earliest visit you can.`.trim(), talkingPoints: ["The last vendor didn't show"] } },
+      statusDetail: `${vendor?.name} didn't show; calling ${next.name}`,
+    },
+    ["scheduled"],
+  );
+  if (!moved) return;
+  await notify({ userId: task.userId, taskId: task.id, kind: "report", body: `${vendor?.name} didn't show at ${unit?.label}. I've marked it in their record and I'm calling ${next.name} now.`, dedupeKey: `noshow-mgr:${key}` });
+  kick(task.id);
 }
 
 /** Work orders the background loop or a "check now" tap can wake. */

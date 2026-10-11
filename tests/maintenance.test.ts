@@ -2,7 +2,8 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { SimTurn } from "../src/server/voice/mock-scenarios";
 
 // The property-management demo on the simulated stack: Maria texts that Unit
 // B's AC is out, with two photos. Telo triages it, ranks the HVAC vendors from
@@ -30,6 +31,8 @@ delete process.env.TELO_PORTFOLIO_PHONES;
 const MARIA = "+14155550122";
 const PRIYA = "+14155550111";
 const AISHA = "+14155550123";
+const TOM = "+14155550124";
+const LENA = "+14155550125";
 
 type Mods = {
   db: typeof import("../src/server/db/client");
@@ -171,4 +174,117 @@ describe("a tenant calls Telo's number", () => {
     expect(opened.typed).toMatchObject({ trade: "appliance", intakeChannel: "call" });
     await waitFor(async () => (await messagesOf(task.id)).find((x) => x.party?.id === "ten_linden_house" && x.direction === "out"), "a text back to Grace");
   }, 30_000);
+});
+
+describe("vendors who say call back later", () => {
+  // The three plumbers, scripted by how many times each has been called in this test.
+  const said = new Map<string, number>();
+  let lines: Record<string, (n: number) => SimTurn[] | null> = {};
+  const them = (text: string): SimTurn => ({ speaker: "other", text });
+  const telo = (text: string): SimTurn => ({ speaker: "agent", text });
+  const opening = telo("Hi, this is Telo, an AI assistant calling for Dylan at Bayside Property Management; this call is recorded. I have a plumbing job at 905 Pine Ave. When could someone come out?");
+  const callback = (line: string) => [them("Hello, dispatch."), opening, them(line), telo("Okay, I'll call you back then. Thanks.")];
+  const visit = (line: string, close: string) => [them("Hello, dispatch."), opening, them(line), telo(close)];
+  let added = 0;
+
+  beforeAll(async () => {
+    const { SCENARIOS } = await import("../src/server/voice/mock-scenarios");
+    for (const name of ["Summit Mechanical", "DripFix Plumbing", "FlowRight Plumbing & Rooter"]) {
+      SCENARIOS.unshift({
+        match: new RegExp(name.split(" ")[0], "i"),
+        persona: () => {
+          const n = (said.get(name) ?? 0) + 1;
+          said.set(name, n);
+          return lines[name]?.(n) ?? null;
+        },
+        script: () => "no_answer",
+      });
+      added++;
+    }
+  });
+  afterAll(async () => {
+    const { SCENARIOS } = await import("../src/server/voice/mock-scenarios");
+    SCENARIOS.splice(0, added);
+  });
+
+  const plumbers = async () => {
+    const { rankVendors } = await import("../src/server/portfolio/insights");
+    return (await rankVendors("plumbing")).value.map((s) => s.vendor);
+  };
+  const until = (id: string, ok: (t: NonNullable<Awaited<ReturnType<Mods["repo"]["getTask"]>>>) => boolean, label: string) =>
+    waitFor(async () => {
+      const t = await m.repo.getTask(id);
+      return t && ok(t) ? t : null;
+    }, label);
+  const days = (d: Date | null | undefined) => (d!.getTime() - Date.now()) / 86_400_000;
+
+  it("calls back in three days, again in four when asked, books, and replaces a no-show", async () => {
+    const [first, second, third] = await plumbers();
+    said.clear();
+    lines = {
+      [first.name]: (n) =>
+        n === 1
+          ? callback("Our schedule is full this week. Call us back in three days and I'll have openings.")
+          : n === 2
+            ? callback("Still slammed, sorry. Try us again in four days.")
+            : visit("Good news, we had a cancellation. You're booked for tomorrow at 2 pm. The repair is $220, plus our trip fee.", "Tomorrow at 2 PM. Thank you."),
+      [second.name]: () => null,
+      [third.name]: () => visit("We can be there tomorrow at 10 am. You're booked; it's $195 all in.", "Tomorrow at 10 AM, thank you."),
+    };
+    await text(TOM, "The bathroom faucet keeps dripping all night.");
+    const task = await workOrder("ten_pine_2");
+
+    // The first plumber asks for a call in three days and the second doesn't pick up. A drip can wait.
+    const waiting = await until(task.id, (t) => t.status === "scheduled" && Boolean(t.followUp?.callback), "the callback to be scheduled");
+    expect(waiting.context?.severity).toBe("routine");
+    expect(waiting.followUp?.callback?.targetName).toBe(first.name);
+    expect(days(waiting.wakeAt)).toBeGreaterThan(2);
+    expect(days(waiting.wakeAt)).toBeLessThan(4);
+    let msgs = await messagesOf(task.id);
+    expect(msgs.some((x) => !x.party && x.body.includes(`${first.name} asked me to call back`))).toBe(true);
+    expect(msgs.some((x) => x.party?.id === "ten_pine_2" && /asked me to call back/.test(x.body))).toBe(true);
+
+    // Called back, they ask again: four more days, on its own.
+    expect(await m.orchestrator.wakeTask(task.id)).toBe(true);
+    const again = await until(task.id, (t) => t.status === "scheduled" && Boolean(t.wakeAt && t.wakeAt.getTime() > waiting.wakeAt!.getTime() + 12 * 3600_000), "the second callback");
+    expect(again.followUp?.callback?.targetName).toBe(first.name);
+    expect(days(again.wakeAt)).toBeGreaterThan(3);
+    expect(days(again.wakeAt)).toBeLessThan(5);
+    expect((await messagesOf(task.id)).some((x) => !x.party && /the second time they've asked/.test(x.body))).toBe(true);
+
+    // The third call books.
+    expect(await m.orchestrator.wakeTask(task.id)).toBe(true);
+    const booked = await until(task.id, (t) => t.status === "scheduled" && t.context?.stage === "booked", "the booking");
+    expect(booked.context?.booked).toMatchObject({ vendor: first.id, cents: 22_000 });
+    expect(booked.context?.booked?.callId).toBeTruthy();
+
+    // Nobody came: a no-show on their record, and the next plumber who hasn't been tried is booked.
+    expect(await m.orchestrator.wakeTask(task.id)).toBe(true);
+    await waitFor(async () => (await messagesOf(task.id)).some((x) => x.party?.id === "ten_pine_2" && /Reply Y or N/.test(x.body)), "the fixed? check");
+    await text(TOM, "Nobody ever showed up.");
+    const rebooked = await until(task.id, (t) => t.status === "scheduled" && t.context?.booked?.vendor === third.id, "the next plumber's booking");
+    expect(rebooked.context?.stage).toBe("booked");
+    const evs = await eventsOf(task.id);
+    expect(evs.find((e) => e.type === "vendor.outcome")).toMatchObject({ typed: { vendorOutcome: "no_show" }, refs: { vendor: first.id } });
+    expect(evs.find((e) => e.type === "commitment.broken")?.refs).toMatchObject({ vendor: first.id });
+    expect(evs.filter((e) => e.type === "vendor.booked").map((e) => e.refs?.vendor)).toEqual([first.id, third.id]);
+    msgs = await messagesOf(task.id);
+    expect(msgs.some((x) => x.party?.id === "ten_pine_2" && new RegExp(`${first.name} didn't show`).test(x.body))).toBe(true);
+  }, 60_000);
+
+  it("doesn't let an urgent leak wait three days: the next plumber is called now", async () => {
+    const [first, second, third] = await plumbers();
+    said.clear();
+    lines = {
+      [first.name]: () => callback("Our schedule is full this week. Call us back in three days."),
+      [second.name]: () => null,
+      [third.name]: () => visit("We can come tomorrow at 9 am. You're booked; it's $240 all in.", "Tomorrow at 9 AM, thank you."),
+    };
+    await text(LENA, "Water is leaking under the kitchen sink and the cabinet is soaked.", 1);
+    const task = await workOrder("ten_pine_3");
+    const booked = await until(task.id, (t) => t.status === "scheduled" && t.context?.stage === "booked", "the booking");
+    expect(booked.context?.severity).toBe("urgent");
+    expect(booked.context?.booked?.vendor).toBe(third.id);
+    expect((await messagesOf(task.id)).some((x) => !x.party && /shouldn't wait that long, so I'm calling/.test(x.body))).toBe(true);
+  }, 60_000);
 });

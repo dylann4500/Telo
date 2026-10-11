@@ -143,7 +143,7 @@ const UNREACHED: readonly CallAnalysis["outcome"][] = ["no_answer", "voicemail",
  * ten minutes out, at most a year), and inside calling hours. No usable time
  * means 10:00 on the next weekday.
  */
-function callbackTime(proposed: string | null | undefined, tz: string): { at: Date; moved: boolean } {
+export function callbackTime(proposed: string | null | undefined, tz: string): { at: Date; moved: boolean } {
   const parsed = proposed ? Date.parse(proposed) : NaN;
   if (Number.isNaN(parsed)) return { at: nextWeekdayMorning(tz), moved: true };
   const bounded = Math.min(Math.max(parsed, Date.now() + 10 * 60_000), Date.now() + 365 * 86_400_000);
@@ -843,6 +843,11 @@ async function callBack(task: TaskRow, d: DecideResult, lastCall: CallRow | unde
     if (d.userMessage) await notify({ userId: task.userId, taskId: task.id, kind: "update", body: d.userMessage, dedupeKey: `cb:${task.id}:${moved.version}` });
   }
   return Boolean(moved);
+}
+
+/** A work order's callback or retry: parked until `at`, then woken into a new plan for that vendor. */
+export function scheduleWorkOrder(task: TaskRow, at: Date, followUp: FollowUp, note: { detail: string; message: string; summary: string; orgKey: string | null; kind?: MessageKind }): Promise<boolean> {
+  return scheduleTask(task, at, followUp, note);
 }
 
 /** reviewing → scheduled: park the task until `at`; the background loop wakes it. */

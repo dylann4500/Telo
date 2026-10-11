@@ -123,7 +123,8 @@ export async function handleEmail(user: UserRow, msg: MailMessage): Promise<void
   });
 
   // What a scheduled task was waiting for: finish it without the call.
-  if (task && read.settlesTask && task.status === "scheduled" && (await onEmailForTask(task.id))) return;
+  // A work order's follow-up belongs to the tenant's "fixed?", never to an email.
+  if (task && read.settlesTask && task.status === "scheduled" && task.context?.kind !== "maintenance" && (await onEmailForTask(task.id))) return;
   // Something to call about, and no task on it yet: offer the call.
   if (read.needsCall && !task) return suggestCall(user, msg, read, business, orgKey, summary);
   // Otherwise a quiet note in the dashboard thread; no text to the phone.

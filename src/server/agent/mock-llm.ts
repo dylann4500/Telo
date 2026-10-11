@@ -461,6 +461,7 @@ export class MockLLM implements LLM {
       [/\b(ac|a\/c|air ?condition\w*|cooling|blowing warm)\b/, "hvac", "ac_no_cool", "AC not cooling"],
       [/\b(heat|heater|furnace)\b/, "hvac", "no_heat", "No heat"],
       [/hot water|water heater/, "plumbing", "wh_no_hot_water", "No hot water"],
+      [/\b(faucet|tap|shower ?head)\b.*\bdrip|\bdrip\w*\b.*\b(faucet|tap|shower ?head)\b/, "plumbing", "faucet_drip", "Dripping faucet"],
       [/\b(leak|leaking|drip|toilet|sink|clog|drain|pipe)\b/, "plumbing", /toilet|clog|drain/.test(t) ? "drain_clog" : "sink_leak", /toilet|clog|drain/.test(t) ? "Clogged drain" : "Leak"],
       [/\b(outlet|power|breaker|lights?|electric\w*)\b/, "electrical", "outlet_dead", "Power out to part of the unit"],
       [/\b(fridge|refrigerator|dishwasher|washer|dryer|stove|oven|range)\b/, "appliance", "appliance_broken", "Appliance not working"],
@@ -470,7 +471,8 @@ export class MockLLM implements LLM {
     const hit = rules.find(([re]) => re.test(t));
     const [trade, jobCode, title] = hit ? [hit[1], hit[2], hit[3]] : ["general", "general_repair", "Repair needed"];
     const emergency = gas ? "gas" : fire ? "fire" : co ? "co" : flood ? "water" : "none";
-    const severity = emergency !== "none" ? "emergency" : /hvac|plumbing|locks|electrical/.test(trade) ? "urgent" : "routine";
+    const minor = jobCode === "faucet_drip" && !/\bleak\w*|water on the floor|overflow/.test(t);
+    const severity = emergency !== "none" ? "emergency" : minor ? "routine" : /hvac|plumbing|locks|electrical/.test(trade) ? "urgent" : "routine";
     const needPhotos = photos === 0 && emergency === "none";
     const ask = trade === "hvac" ? "a photo of the thermostat and the outdoor unit" : trade === "plumbing" ? "a photo of the leak and what's under it" : "a photo of the problem";
     return {

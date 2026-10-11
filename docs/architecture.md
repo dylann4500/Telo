@@ -27,10 +27,12 @@ A maintenance task carries `tasks.context` (`kind: "maintenance"`): its unit, pr
 | `understand` | `triage`: Claude's `triage-maintenance`, the emergency script, `wo.opened`, then Keewano ranks vendors and reads the asset's repairs (`portfolio/insights.ts`). Targets are the top two vendors; the authority envelope comes from the owner's approval limit. |
 | `plan` | Same planner; the legs always run in parallel. |
 | `ask_customer` (mid-call) | A decision goes to the owner by text (`question.context.party`), not the manager; `approval.requested` and `approval.granted` carry the response time, channel and `approval_while_holding`. |
-| `review` | `afterCalls`: `quote.received` per vendor; the vendor who booked on the call (within the limit, or approved by the owner) is booked; otherwise the manager gets the comparison. |
-| `wakeTask` | `wake`: "on the way?" to the vendor and "fixed?" to the tenant (stage `checking`). The tenant's "Y" runs `closeWorkOrder`: vendor outcome, promise kept, access, asset repaired, `wo.completed` with manager touches. |
+| `review` | `afterCalls`: `quote.received` per vendor, then the next step from this round's calls. The newest booking within the limit (or approved by the owner) is booked. A vendor who asked to be called back ("try us in three days") is called then, and again each time they ask. When nobody picks up, the next vendor in Keewano's ranking is called now, or the same one is retried later. An urgent job doesn't wait more than a day on a callback while another vendor is untried. Otherwise the manager gets the comparison. |
+| `wakeTask` | `wake`: "on the way?" to the vendor and "fixed?" to the tenant (stage `checking`). The tenant's "Y" runs `closeWorkOrder`: vendor outcome, promise kept, access, asset repaired, `wo.completed` with manager touches. "Nobody came" runs `vendorNoShow`: a `no_show` outcome and a broken arrival promise on the vendor's stream, then the next vendor is called. A booking that falls through is `voided`, so it's never booked from again. |
 
 **Routing by phone number** (`portfolio/index.ts` `partyByPhone`): the manager's number is the user, as before. A tenant's text or call opens or updates their work order, an owner's text answers their open question (or is forwarded to the manager), and a vendor's text is forwarded. Messages to and from them are stored in the manager's thread with `messages.party`, which the dashboard labels.
+
+Booking, follow-up and close events are keyed by the booked call, so a second booking on the same work order (after a no-show, or a repair that didn't hold) gets its own events. An email never settles a work order; the tenant's "fixed?" does.
 
 **Phones:** the seeded portfolio's numbers are fictional (555-01xx); `TELO_PORTFOLIO_PHONES` maps party ids to real phones for a live demo, and Telo never texts a fictional number on a real line.
 
