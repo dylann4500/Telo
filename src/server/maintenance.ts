@@ -141,6 +141,16 @@ export async function notifyParty(input: { party: Party; taskId?: string | null;
   }
 }
 
+/** Telo is on an update call with the manager right now. */
+async function managerOnCall(): Promise<boolean> {
+  const live = await db
+    .select({ id: calls.id })
+    .from(calls)
+    .where(and(eq(calls.kind, "user_update"), inArray(calls.status, ["queued", "ringing", "in_progress"]), gte(calls.createdAt, new Date(Date.now() - 10 * 60_000))))
+    .limit(1);
+  return live.length > 0;
+}
+
 /** A Telo call is on this phone now (a vendor call on a shared test phone, or another party call). */
 async function phoneBusy(phone: string): Promise<boolean> {
   const d = phone.replace(/\D/g, "").slice(-10);
@@ -162,6 +172,12 @@ async function callParty(input: { party: Party; taskId: string | null; body: str
   // and one call at a time on a phone (the same test phone may be playing a vendor).
   for (let i = 0; i < 100 && input.taskId && (await getTask(input.taskId))?.status === "reviewing"; i++) await sleep(mock ? 50 : 1000);
   for (let i = 0; i < 100 && (await phoneBusy(phone)); i++) await sleep(mock ? 100 : 3000);
+  // The manager hears first: when Telo rings them about the same step (the booking), this call waits until
+  // that one is over, so the two never ring at once. An approval (a vendor holding) or safety steps don't wait.
+  if (!["approval", "safety"].includes(input.kind)) {
+    await sleep(mock ? 50 : 4000);
+    for (let i = 0; i < 90 && (await managerOnCall()); i++) await sleep(mock ? 100 : 2000);
+  }
   const first = firstName(input.party.name);
   const who = input.party.role === "owner" ? "the owner of a rental property the firm manages" : "a tenant in a home the firm manages";
   const instructions = [

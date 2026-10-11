@@ -148,7 +148,12 @@ async function deliver(
       live.lines.push(body);
     } else if (channel === "voice") {
       // Calling the user is reserved for things that need them, and the same checks apply on a voice-only setup.
-      if (CALL_WORTHY.includes(input.kind) && (await mayCall(user, Boolean(input.urgent)))) await callUser(user, input.taskId ?? null, body);
+      if (CALL_WORTHY.includes(input.kind) && (await mayCall(user, Boolean(input.urgent)))) {
+        // While Telo is on a call with a tenant or owner (the "fixed?" call that just closed the job), the
+        // manager's call waits for it to end, so the two never ring at once. A business holding doesn't wait.
+        if (!input.urgent && (await partyCallLive())) void callUserAfterPartyCall(user, input.taskId ?? null, body, id);
+        else await callUser(user, input.taskId ?? null, body);
+      }
     } else if (channel !== "web") {
       if (!user.phone) throw new Error("No phone number on file (set TELO_USER_PHONE)");
       const res = await getVoice().sendMessage({ to: user.phone, body, channel: channel as MessageChannel });
@@ -173,6 +178,24 @@ async function deliver(
       .where(eq(messages.id, id));
   }
   return true;
+}
+
+/** Telo is on a call with a tenant or owner right now. */
+async function partyCallLive(): Promise<boolean> {
+  const live = await db
+    .select({ id: calls.id })
+    .from(calls)
+    .where(and(eq(calls.kind, "party_update"), inArray(calls.status, ["queued", "ringing", "in_progress"]), gte(calls.createdAt, new Date(Date.now() - 10 * 60_000))))
+    .limit(1);
+  return live.length > 0;
+}
+
+async function callUserAfterPartyCall(user: UserRow, taskId: string | null, body: string, messageId: string) {
+  for (let i = 0; i < 60 && (await partyCallLive()); i++) await new Promise((r) => setTimeout(r, getVoice().name === "mock" ? 100 : 2000));
+  await callUser(user, taskId, body).catch(async (err) => {
+    console.error("[notify] delivery failed", err);
+    await db.update(messages).set({ status: "failed", error: (err as Error).message.slice(0, 300) }).where(eq(messages.id, messageId));
+  });
 }
 
 /** Telo phones the user, says the update, and listens for an answer. */
