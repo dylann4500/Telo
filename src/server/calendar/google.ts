@@ -34,4 +34,16 @@ export class GoogleCalendar implements CalendarProvider {
     });
     return { id: r.id, link: r.htmlLink ?? null };
   }
+
+  async updateEvent(id: string, patch: { start?: Date; end?: Date; timeZone: string; title?: string; description?: string }): Promise<void> {
+    await googleFetch(`${BASE}/calendars/primary/events/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: {
+        ...(patch.title ? { summary: patch.title } : {}),
+        ...(patch.description ? { description: patch.description } : {}),
+        ...(patch.start ? { start: { dateTime: localIso(patch.start, patch.timeZone), timeZone: patch.timeZone } } : {}),
+        ...(patch.end ? { end: { dateTime: localIso(patch.end, patch.timeZone), timeZone: patch.timeZone } } : {}),
+      },
+    });
+  }
 }

@@ -126,6 +126,55 @@ export function isFictional(phone: string | null | undefined): boolean {
 }
 
 /** The portfolio vendor a call or task target names (by name, or by the org key derived from it). */
+/** Email overrides for a live demo: {"<party id>": "name@example.com"} in TELO_PORTFOLIO_EMAILS. */
+function emailOverrides(): Record<string, string> {
+  const raw = process.env.TELO_PORTFOLIO_EMAILS;
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, string>;
+  } catch {
+    console.warn("[portfolio] TELO_PORTFOLIO_EMAILS is not valid JSON; ignoring it");
+    return {};
+  }
+}
+
+function partyById(id: string): Party | null {
+  const o = getOwner(id);
+  if (o) return { role: "owner", id: o.id, name: o.name, phone: o.phone };
+  const t = getTenancy(id);
+  if (t) return { role: "tenant", id: t.id, name: t.tenantName, phone: t.phone };
+  const v = getVendor(id);
+  if (v) return { role: "vendor", id: v.id, name: v.name, phone: v.phone };
+  const a = getAgency(id);
+  if (a) return { role: "agency", id: a.id, name: a.name, phone: a.phone };
+  return null;
+}
+
+/** Who sent an email, by the address mapped in TELO_PORTFOLIO_EMAILS. */
+export function partyByEmail(address: string | null | undefined): Party | null {
+  const a = (address ?? "").trim().toLowerCase();
+  if (!a) return null;
+  const id = Object.entries(emailOverrides()).find(([, e]) => e.trim().toLowerCase() === a)?.[0];
+  return id ? partyById(id) : null;
+}
+
+/** A tenant, owner or vendor by the name an email gives (a person's full name, or the vendor's company). */
+export function partyByName(name: string | null | undefined): Party | null {
+  const n = (name ?? "").trim().toLowerCase();
+  if (n.length < 3) return null;
+  const t = tenancies().find((x) => x.tenantName.toLowerCase() === n);
+  if (t) return { role: "tenant", id: t.id, name: t.tenantName, phone: t.phone };
+  const o = owners().find((x) => x.name.toLowerCase() === n);
+  if (o) return { role: "owner", id: o.id, name: o.name, phone: o.phone };
+  const v = vendorByName(name);
+  return v ? { role: "vendor", id: v.id, name: v.name, phone: v.phone } : null;
+}
+
+/** The names an email might come from, for the model reading it. */
+export function portfolioNames() {
+  return { tenants: tenancies().map((t) => t.tenantName), owners: owners().map((o) => o.name), vendors: vendors().map((v) => v.name) };
+}
+
 export function vendorByName(name: string | null | undefined): Vendor | undefined {
   const key = (name ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   if (!key) return undefined;

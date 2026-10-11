@@ -576,8 +576,14 @@ export class MockLLM implements LLM {
     const lower = all.toLowerCase();
     const businessy = /receipt|order|refund|confirm|booking|reservation|appointment|bill|statement|invoice|claim|payment|charge|delivery|shipped|cancel|account/i.test(all);
     const marketing = /unsubscribe|newsletter|% off|sale ends/i.test(all) && !/receipt|refund/i.test(all);
-    const relevant = businessy && !marketing;
-    const business = directory.find((d) => lower.includes(d.toLowerCase())) ?? email.fromName ?? email.from.split("@")[1] ?? null;
+    // Mail from the portfolio's tenants, owners and vendors about a repair or a visit.
+    const portfolio = b.portfolio as { tenants: string[]; owners: string[]; vendors: string[] } | undefined;
+    const person = [...(portfolio?.vendors ?? []), ...(portfolio?.tenants ?? []), ...(portfolio?.owners ?? [])].find((n) => lower.includes(n.toLowerCase()) || (email.fromName ?? "").toLowerCase() === n.toLowerCase());
+    const pm = Boolean(person) && /visit|repair|tech\b|unit|apartment|leak|fixed|tenant|tonight|tomorrow/i.test(all);
+    const relevant = (businessy || pm) && !marketing;
+    const business = person ?? directory.find((d) => lower.includes(d.toLowerCase())) ?? email.fromName ?? email.from.split("@")[1] ?? null;
+    const moving = /\b(move|moving|reschedul\w*|instead|push(ed)? (it|the visit)|another time|change the time)\b/i.test(all);
+    const newStart = moving ? laterTime(all, b) : null;
     const needsCall = /denied|declined|overdue|past due|wrong|incorrect|please call|call us|missed|dispute/i.test(all);
     const kind = /refund/i.test(all) ? "refund" : /appointment/i.test(all) ? "appointment" : needsCall ? "problem" : /bill|statement|invoice/i.test(all) ? "bill" : /receipt|order/i.test(all) ? "receipt" : /confirm/i.test(all) ? "confirmation" : "other";
     const amount = moneyValues(all)[0] ?? null;
@@ -595,6 +601,7 @@ export class MockLLM implements LLM {
       needsCall: relevant && needsCall,
       callReason: relevant && needsCall ? `Call ${business} about the ${kind}` : null,
       phone: all.match(PHONE)?.[0] ?? null,
+      newTime: relevant && newStart ? { startsAt: newStart, endsAt: null } : null,
     };
   }
 

@@ -19,6 +19,12 @@ export class MockCalendar implements CalendarProvider {
     return { id, link: null };
   }
 
+  async updateEvent(id: string, patch: { start?: Date; end?: Date; title?: string; description?: string }) {
+    const e = store.created.find((x) => x.id === id);
+    if (!e) throw new Error(`mock calendar event ${id} not found`);
+    Object.assign(e, { ...(patch.start ? { start: patch.start } : {}), ...(patch.end ? { end: patch.end } : {}), ...(patch.title ? { title: patch.title } : {}), ...(patch.description ? { description: patch.description } : {}) });
+  }
+
   /** Tests: mark time as busy. */
   addBusy(start: Date, end: Date) {
     store.busy.push({ start, end });

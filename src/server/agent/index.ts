@@ -194,13 +194,14 @@ export function readEmail(input: {
   now: string;
   email: { from: string; fromName: string | null; subject: string; receivedAt: string; text: string };
   directory: string[];
-  openTasks: { id: string; title: string; status: string; statusDetail: string | null; businesses: string[] }[];
+  portfolio?: { tenants: string[]; owners: string[]; vendors: string[] };
+  openTasks: { id: string; title: string; status: string; statusDetail: string | null; businesses: string[]; people?: string[] }[];
 }) {
   return getLLM().structured({
     name: "read-email",
     tier: "fast",
     system: P.READ_EMAIL_SYSTEM,
-    prompt: context({ now: input.now, directory: input.directory, open_tasks: input.openTasks, email: input.email }),
+    prompt: context({ now: input.now, directory: input.directory, portfolio: input.portfolio, open_tasks: input.openTasks, email: input.email }),
     schema: S.ReadEmailSchema,
     effort: "low",
   });

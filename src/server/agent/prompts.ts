@@ -93,6 +93,8 @@ export const READ_EMAIL_SYSTEM = `${TELO}
 
 Your job: read one email from the user's inbox and decide what it means for them. Telo can only read email; it can't reply.
 - Most mail isn't for Telo. relevant is true only for mail from a business about the user's own dealings: orders, receipts, refunds, bookings, appointments, bills, claims, deliveries, account problems.
+- The user is a property manager. Mail from the portfolio's tenants, owners and vendors (listed in portfolio) about a unit, a repair, a visit or a bill is relevant too; business is then the vendor's company or the person's full name exactly as listed.
+- newTime: only when the sender proposes or confirms a new or changed time for a visit or appointment (a vendor moving a repair visit, a tenant asking for another time). Resolve it from now, in the user's timezone.
 - Judge by what the email says, not only who sent it: a forwarded or self-sent copy of business mail (a receipt the user forwarded to themselves) counts, and business is the one it's about.
 - Marketing, newsletters, social notifications, personal mail, and security codes or sign-in links are not relevant.
 - Report only what the email says. Never infer amounts, dates or numbers that aren't in it, and never copy passwords, PINs, verification codes or full card numbers into any field.

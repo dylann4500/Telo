@@ -19,4 +19,6 @@ export interface CalendarProvider {
   readonly name: "google" | "mock";
   busy(from: Date, to: Date): Promise<BusySlot[]>;
   createEvent(e: NewCalendarEvent): Promise<{ id: string; link: string | null }>;
+  /** Moves or renames an event Telo created. */
+  updateEvent(id: string, patch: { start?: Date; end?: Date; timeZone: string; title?: string; description?: string }): Promise<void>;
 }

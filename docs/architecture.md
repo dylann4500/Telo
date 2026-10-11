@@ -32,6 +32,8 @@ A maintenance task carries `tasks.context` (`kind: "maintenance"`): its unit, pr
 
 **Routing by phone number** (`portfolio/index.ts` `partyByPhone`): the manager's number is the user, as before. A tenant's text or call opens or updates their work order, an owner's text answers their open question (or is forwarded to the manager), and a vendor's text is forwarded. Messages to and from them are stored in the manager's thread with `messages.party`, which the dashboard labels.
 
+**Mail and the calendar:** an email from a tenant, owner or vendor (by the address in `TELO_PORTFOLIO_EMAILS`, or by the name Claude reads off it) goes to their work order (`handlePartyEmail`). A tenant's or owner's email runs through the same handler as their text. A vendor's email lands in the work order's thread, and a new time from the booked vendor (`read-email`'s `newTime`) runs `rescheduleVisit`: the booking, the calendar event (its id is kept on the booking), an updated entry notice and the visit check all move, and the close records the count in `access.outcome`. A no-show renames the calendar event.
+
 Booking, follow-up and close events are keyed by the booked call, so a second booking on the same work order (after a no-show, or a repair that didn't hold) gets its own events. An email never settles a work order; the tenant's "fixed?" does.
 
 **Phones:** the seeded portfolio's numbers are fictional (555-01xx); `TELO_PORTFOLIO_PHONES` maps party ids to real phones for a live demo, and Telo never texts a fictional number on a real line. On a real line, a vendor still on a fictional number rings `DEMO_TARGET_PHONE` instead. When two vendors would ring the same phone, they're called one at a time.

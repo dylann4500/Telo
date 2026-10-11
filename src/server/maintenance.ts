@@ -9,11 +9,12 @@ import { TERMINAL_STATUSES } from "./domain/types";
 import { newId } from "./ids";
 import { recordEvent } from "./memory/events";
 import { notify } from "./notify";
-import { addWorkOrderToCalendar, advance, callbackTime, finalizeTask, kick, scheduleWorkOrder } from "./orchestrator";
-import { assetFor, assetLabel, FIRM, getAsset, getOwner, getTenancy, getUnit, getVendor, homeOf, isFictional, vendorByName, type Party } from "./portfolio";
+import { getCalendar } from "./calendar";
+import { advance, callbackTime, finalizeTask, kick, scheduleWorkOrder } from "./orchestrator";
+import { assetFor, assetLabel, FIRM, getAsset, getOwner, getProperty, getTenancy, getUnit, getVendor, homeOf, isFictional, vendorByName, type Party } from "./portfolio";
 import { assetHistory, rankVendors, shouldQuoteReplacement, type Scorecard } from "./portfolio/insights";
 import { containsSecret, maskSecrets } from "./redact";
-import { callIsLive, getTask, getUser, listCalls, patchTask, transitionTask } from "./tasks/repo";
+import { callIsLive, getTask, getUser, listActiveTasks, listCalls, patchTask, transitionTask } from "./tasks/repo";
 import { clampToCallingHours, formatWhen, nowContext, windowLabel } from "./time";
 import { getVoice } from "./voice";
 
@@ -121,8 +122,8 @@ async function storeInbound(party: Party, body: string, channel: string, provide
       userId: config.user.id,
       taskId,
       direction: "in",
-      channel: channel === "voice" ? "voice" : "sms",
-      kind: channel === "voice" ? "call" : "chat",
+      channel: channel === "voice" ? "voice" : channel === "email" ? "email" : "sms",
+      kind: channel === "voice" ? "call" : channel === "email" ? "email" : "chat",
       body: maskSecrets(body),
       providerMessageId,
       status: "received",
@@ -164,7 +165,7 @@ async function tenantText(party: Party, body: string, channel: string, providerM
     return true;
   }
   if (open) return tenantFollowUp(party, open, body, media);
-  await startWorkOrder(party, body, channel === "voice" ? "voice" : "sms", media, stored);
+  await startWorkOrder(party, body, channel === "voice" ? "voice" : channel === "email" ? "email" : "sms", media, stored);
   return true;
 }
 
@@ -183,7 +184,7 @@ export async function handleTenantCall(party: Party, call: CallRow): Promise<voi
 }
 
 /** A new report: create the work order and let the orchestrator triage it. */
-export async function startWorkOrder(party: Party, report: string, source: "sms" | "voice", media: string[], messageId?: string | null): Promise<string | null> {
+export async function startWorkOrder(party: Party, report: string, source: "sms" | "voice" | "email", media: string[], messageId?: string | null): Promise<string | null> {
   const home = homeOf(party.id);
   if (!home) return null;
   const id = newId("tsk");
@@ -234,7 +235,7 @@ async function tenantFollowUp(party: Party, task: TaskRow & { context: TaskConte
   if (ctx.stage === "booked" && !ctx.accessConfirmed && YES.test(body)) {
     await patchTask(task.id, { context: { ...ctx, accessConfirmed: true }, facts: [...task.facts.filter((f) => f.key !== "access_confirmed"), { key: "access_confirmed", label: "Tenant agreed to entry", value: `Yes (${new Date().toISOString()})`, sensitive: false, source: "user" }] });
     const when = ctx.booked?.startsAt ? windowLabel(new Date(ctx.booked.startsAt), ctx.booked.endsAt ? new Date(ctx.booked.endsAt) : null, config.user.timezone) : "then";
-    await notifyParty({ party, taskId: task.id, kind: "reply", body: `Thanks ${firstName(party.name)}. They'll be there ${when}.`, dedupeKey: `access-ok:${task.id}` });
+    await notifyParty({ party, taskId: task.id, kind: "reply", body: `Thanks ${firstName(party.name)}. They'll be there ${when}.`, dedupeKey: `access-ok:${ctx.booked?.callId ?? task.id}:${ctx.reschedules ?? 0}` });
     return true;
   }
   if (body.trim()) {
@@ -404,7 +405,7 @@ async function recordWorkOrderOpened(task: TaskRow & { context: TaskContext }, r
     taskId: task.id,
     type: "wo.opened",
     summary: `Work order: ${r.problem} at ${unitLabel}`,
-    typed: { trade: r.trade, severity: r.severity, intakeChannel: photos ? "mms" : task.source === "voice" ? "call" : "sms", photoCount: photos },
+    typed: { trade: r.trade, severity: r.severity, intakeChannel: photos ? "mms" : task.source === "voice" ? "call" : task.source === "email" ? "email" : "sms", photoCount: photos },
     refs,
     occurredAt: task.createdAt,
   });
@@ -743,8 +744,11 @@ async function book(task: TaskRow & { context: TaskContext }, call: CallRow, own
     ["reviewing"],
   );
   if (!moved) return false;
-  // Vendor windows belong on the manager's calendar (when one is connected).
-  const onCalendar = await addWorkOrderToCalendar(moved, confirmation);
+  // Vendor windows belong on the manager's calendar (when one is connected); the event moves when the visit does.
+  const ev = await visitOnCalendar(task, vendor.name, startsAt, endsAt, confirmation, tz);
+  const fresh = ev.id ? await getTask(task.id) : null;
+  if (ev.id && isMaintenance(fresh) && fresh.context.booked?.callId === call.id) await patchTask(task.id, { context: { ...fresh.context, booked: { ...fresh.context.booked, calendarEventId: ev.id } } }, ["scheduled"]);
+  const onCalendar = ev.note;
   await notify({
     userId: task.userId,
     taskId: task.id,
@@ -804,7 +808,7 @@ export async function closeWorkOrder(task: TaskRow & { context: TaskContext }, f
   const key = ctx.booked?.callId ?? task.id;
   await recordEvent({ id: `evt_vo_${key}`, userId: task.userId, taskId: task.id, type: "vendor.outcome", summary: `${vendor?.name}: on time`, typed: { vendorOutcome: "on_time", lateMinutes: 0 }, refs });
   await recordEvent({ id: `evt_kept_${key}`, userId: task.userId, taskId: task.id, type: "commitment.fulfilled", summary: `${vendor?.name} kept their arrival promise`, typed: { commitmentKind: "arrival", commitmentLateMinutes: 0 }, refs });
-  await recordEvent({ id: `evt_access_${key}`, userId: task.userId, taskId: task.id, type: "access.outcome", summary: `Access at ${unit.label}: done`, typed: { accessOutcome: "done", reschedules: 0 }, refs: refsOf(ctx) });
+  await recordEvent({ id: `evt_access_${key}`, userId: task.userId, taskId: task.id, type: "access.outcome", summary: `Access at ${unit.label}: done`, typed: { accessOutcome: "done", reschedules: ctx.reschedules ?? 0 }, refs: refsOf(ctx) });
   const asset = getAsset(ctx.asset);
   if (asset) {
     const prior = await assetHistory(asset.id);
@@ -835,6 +839,104 @@ export async function closeWorkOrder(task: TaskRow & { context: TaskContext }, f
   );
 }
 
+/** The vendor's visit on the manager's calendar, when one is connected: the event id (kept so it can move) and a line for the manager. */
+async function visitOnCalendar(task: TaskRow & { context: TaskContext }, vendorName: string, startsAt: Date | null, endsAt: Date | null, confirmation: string | null, tz: string): Promise<{ id: string | null; note: string }> {
+  const cal = getCalendar();
+  if (!cal || !config.calendar.addBookings || !startsAt) return { id: null, note: "" };
+  const ctx = task.context;
+  const unit = getUnit(ctx.unit);
+  const property = getProperty(ctx.property);
+  const tenant = getTenancy(ctx.tenancy);
+  try {
+    const ev = await cal.createEvent({
+      title: `${vendorName}: ${ctx.issue ?? "repair"} at ${unit?.label ?? "the unit"}`,
+      start: startsAt,
+      end: endsAt ?? new Date(startsAt.getTime() + 3600_000),
+      timeZone: tz,
+      location: property ? `${unit?.label}, ${property.city}, ${property.state}` : (unit?.label ?? null),
+      description: ["Booked by Telo.", tenant ? `Tenant: ${tenant.tenantName}.` : "", confirmation ? `Confirmation ${confirmation}.` : ""].filter(Boolean).join(" "),
+    });
+    await recordEvent({ userId: task.userId, taskId: task.id, type: "calendar.event_created", summary: `Added to your calendar: ${vendorName} at ${unit?.label}, ${formatWhen(startsAt, tz, { absolute: true })}`, data: { eventId: ev.id, link: ev.link } });
+    return { id: ev.id, note: " It's on your calendar." };
+  } catch (err) {
+    console.error("[calendar] couldn't add the visit", err);
+    return { id: null, note: " I couldn't add it to your calendar." };
+  }
+}
+
+/** Mail from a tenant, owner or vendor. A tenant's or owner's email is handled like their text ("Y, it's fixed",
+ * "nobody came", "approve it", a new problem); a vendor's lands on their work order, and a new time from the
+ * booked vendor moves the visit. */
+export async function handlePartyEmail(
+  party: Party,
+  email: { id: string; subject: string; text: string; summary: string; newTime: { startsAt: string | null; endsAt: string | null } | null; taskId: string | null },
+): Promise<boolean> {
+  if (party.role === "tenant" || party.role === "owner") return handlePartyText(party, { body: emailBody(email.subject, email.text), channel: "email", providerMessageId: `email:${email.id}` });
+  if (party.role !== "vendor") return false;
+  const task = await vendorWorkOrder(party.id, email.taskId);
+  const stored = await storeInbound(party, `${email.subject.trim()}: ${email.summary}`.slice(0, 500), "email", `email:${email.id}`, task?.id ?? null);
+  if (!stored) return true;
+  const start = email.newTime?.startsAt ? new Date(email.newTime.startsAt) : null;
+  if (task?.status === "scheduled" && task.context.booked?.vendor === party.id && start && start.getTime() > Date.now()) {
+    const end = email.newTime?.endsAt ? new Date(email.newTime.endsAt) : null;
+    await rescheduleVisit(task, start, end && end > start ? end : null, "email");
+    return true;
+  }
+  await notify({ userId: config.user.id, taskId: task?.id ?? null, kind: "update", body: `${party.name} emailed${task ? ` about ${getUnit(task.context.unit)?.label}` : ""}: ${email.summary}`, dedupeKey: `fwd:${stored}` });
+  return true;
+}
+
+/** What the person wrote: the new lines (no quoted thread), then the subject. */
+function emailBody(subject: string, text: string): string {
+  const fresh = text.split(/\n(?:On .+wrote:|-{2,}\s*Original Message|>)/)[0].trim();
+  const subj = /^(re|fwd?):/i.test(subject.trim()) ? "" : subject.trim();
+  return [fresh, subj].filter(Boolean).join("\n").slice(0, 1000);
+}
+
+/** The work order a vendor's message is about: the one named, else the one they're booked on, else one they were called for. */
+async function vendorWorkOrder(vendorId: string, hint: string | null): Promise<(TaskRow & { context: TaskContext }) | undefined> {
+  const open = (await listActiveTasks(config.user.id)).filter(isMaintenance);
+  const involved = (t: TaskRow & { context: TaskContext }) => t.context.booked?.vendor === vendorId || t.targets.some((x) => vendorByName(x.name)?.id === vendorId);
+  return open.find((t) => t.id === hint && involved(t)) ?? open.find((t) => t.context.booked?.vendor === vendorId) ?? open.find(involved);
+}
+
+/** The booked vendor moved the visit: the calendar, the tenant's entry notice and the visit check all follow. */
+async function rescheduleVisit(task: TaskRow & { context: TaskContext }, startsAt: Date, endsAt: Date | null, via: "email" | "text"): Promise<void> {
+  const ctx = task.context;
+  const b = ctx.booked!;
+  const tz = (await getUser(task.userId))?.timezone ?? config.user.timezone;
+  const vendor = getVendor(b.vendor);
+  const unit = getUnit(ctx.unit)!;
+  const tenant = tenantParty(ctx.tenancy);
+  const window = windowLabel(startsAt, endsAt, tz);
+  const reschedules = (ctx.reschedules ?? 0) + 1;
+  const key = `${b.callId ?? task.id}:${reschedules}`;
+  const moved = await patchTask(
+    task.id,
+    {
+      wakeAt: new Date(startsAt.getTime() + 30 * 60_000),
+      context: { ...ctx, stage: "booked", accessConfirmed: false, reschedules, booked: { ...b, startsAt: startsAt.toISOString(), endsAt: endsAt?.toISOString() ?? null } },
+      statusDetail: `${vendor?.name} moved to ${window}`,
+    },
+    ["scheduled"],
+  );
+  if (!moved) return;
+  let onCalendar = "";
+  if (b.calendarEventId) {
+    onCalendar = await getCalendar()
+      ?.updateEvent(b.calendarEventId, { start: startsAt, end: endsAt ?? new Date(startsAt.getTime() + 3600_000), timeZone: tz })
+      .then(() => " I moved it on your calendar.")
+      .catch((err) => (console.error("[calendar] couldn't move the visit", err), " I couldn't move it on your calendar.")) ?? "";
+  }
+  const hours = Math.max(0, Math.round((startsAt.getTime() - Date.now()) / 3600_000));
+  if (tenant) {
+    const notice = `${vendor?.name} moved the visit to ${window}. This is your updated notice of entry for the repair at ${unit.label}.${hours < 24 ? " That's less than 24 hours away, so reply YES if it's OK for them to come in then." : ""}`;
+    await notifyParty({ party: tenant, taskId: task.id, kind: "notice", body: notice, dedupeKey: `notice:${key}` });
+    await recordEvent({ id: `evt_notice_${key.replace(":", "_")}`, userId: task.userId, taskId: task.id, type: "entry_notice.sent", summary: `Updated entry notice sent to ${firstName(tenant.name)} (${hours} h ahead)`, data: { text: notice, sentAt: new Date().toISOString() }, typed: { noticePurpose: "repair", noticeHours: hours, noticeMethod: "sms" }, refs: refsOf(ctx) });
+  }
+  await notify({ userId: task.userId, taskId: task.id, kind: "report", body: `${vendor?.name} ${via === "email" ? "emailed to move" : "moved"} the visit at ${unit.label} to ${window}.${tenant ? ` ${firstName(tenant.name)} has the new time and an updated entry notice.` : ""}${onCalendar}`, dedupeKey: `moved:${key}` });
+}
+
 /** The booked vendor never came: their record shows it (Keewano learns), and the next vendor in the ranking is called. */
 export async function vendorNoShow(task: TaskRow & { context: TaskContext }): Promise<void> {
   const ctx = task.context;
@@ -844,6 +946,7 @@ export async function vendorNoShow(task: TaskRow & { context: TaskContext }): Pr
   const unit = getUnit(ctx.unit);
   const refs = refsOf(ctx, vendor ? { vendor: vendor.id } : {});
   await recordEvent({ id: `evt_noshow_${key}`, userId: task.userId, taskId: task.id, type: "vendor.outcome", summary: `${vendor?.name}: no-show`, typed: { vendorOutcome: "no_show", lateMinutes: 0 }, refs });
+  if (booked.calendarEventId) await getCalendar()?.updateEvent(booked.calendarEventId, { title: `No-show: ${vendor?.name} at ${unit?.label}`, timeZone: config.user.timezone }).catch((err) => console.error("[calendar] couldn't mark the no-show", err));
   await recordEvent({ id: `evt_broken_${key}`, userId: task.userId, taskId: task.id, type: "commitment.broken", summary: `${vendor?.name} broke their arrival promise`, typed: { commitmentKind: "arrival" }, refs });
   const tenant = tenantParty(ctx.tenancy);
   const tried = new Set((await listCalls(task.id)).filter((c) => c.kind === "business").map((c) => vendorForCall(c)?.id));

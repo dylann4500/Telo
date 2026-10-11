@@ -238,6 +238,10 @@ export const ReadEmailSchema = z.object({
     .describe("true if a phone call would likely fix or move something forward: a problem, a denial, a charge that looks wrong, a request to call, a missed or cancelled appointment"),
   callReason: z.string().nullable().describe("If needsCall: the request in the user's words, e.g. 'Call Comcast to dispute the $15 late fee'"),
   phone: z.string().nullable().describe("A phone number the email gives for reaching them, exactly as written"),
+  newTime: z
+    .object({ startsAt: z.string().nullable(), endsAt: z.string().nullable() })
+    .nullable()
+    .describe("A new or changed time for a visit or appointment that the sender proposes or confirms, as ISO 8601 with the UTC offset in the user's timezone; null if none"),
 });
 export type ReadEmailResult = z.infer<typeof ReadEmailSchema>;
 

@@ -1171,9 +1171,6 @@ async function finalize(taskId: string, status: Extract<TaskStatus, "completed" 
 }
 
 /** Puts a work order's booked vendor window on the manager's calendar, right when it's booked. */
-export async function addWorkOrderToCalendar(task: TaskRow, confirmation: string | null): Promise<string> {
-  return addBookingToCalendar(task, confirmation);
-}
 
 /** Puts the appointment a call booked on the user's calendar. Returns a few words for the result text. */
 async function addBookingToCalendar(task: TaskRow, confirmation: string | null): Promise<string> {

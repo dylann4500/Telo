@@ -6,10 +6,12 @@ import { db } from "./db/client";
 import { appState, emails, organizations, questions, tasks, type UserRow } from "./db/schema";
 import { newId, orgKeyFor } from "./ids";
 import { getMail } from "./mail";
+import * as maintenance from "./maintenance";
 import { domainOf, type MailMessage } from "./mail/provider";
 import { recordEvent } from "./memory/events";
 import { notify } from "./notify";
 import { normalizePhone, onEmailForTask } from "./orchestrator";
+import { getOwner, getTenancy, partyByEmail, partyByName, portfolioNames } from "./portfolio";
 import { maskSecrets } from "./redact";
 import { getUser, listActiveTasks, listOrganizations } from "./tasks/repo";
 import { localIso, nowContext, withinCallingHours } from "./time";
@@ -69,6 +71,8 @@ function prettyPhone(e164: string): string {
 export async function handleEmail(user: UserRow, msg: MailMessage): Promise<void> {
   const tz = user.timezone;
   const active = await listActiveTasks(user.id);
+  // A tenant, owner or vendor whose address is mapped is always read; anyone else must be relevant.
+  const known = partyByEmail(msg.from);
   const read = await agent.readEmail({
     now: nowContext(tz),
     email: {
@@ -79,16 +83,26 @@ export async function handleEmail(user: UserRow, msg: MailMessage): Promise<void
       text: maskSecrets(msg.text).slice(0, 6000),
     },
     directory: (await listOrganizations()).map((o) => o.name),
-    openTasks: active.map((t) => ({ id: t.id, title: t.title, status: t.status, statusDetail: t.statusDetail, businesses: t.targets.map((x) => x.name) })),
+    portfolio: portfolioNames(),
+    openTasks: active.map((t) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      statusDetail: t.statusDetail,
+      businesses: t.targets.map((x) => x.name),
+      ...(t.context?.kind === "maintenance" ? { people: [getTenancy(t.context.tenancy)?.tenantName, getOwner(t.context.owner)?.name].filter((x): x is string => Boolean(x)) } : {}),
+    })),
   });
   const fromDomain = domainOf(msg.from);
-  if (!read.relevant) {
+  if (!read.relevant && !known) {
     // Personal mail, newsletters, codes: nothing kept but the fact it was looked at.
     await db.update(emails).set({ status: "ignored", fromDomain, receivedAt: msg.receivedAt }).where(eq(emails.id, msg.id));
     return;
   }
-  const business = (read.business ?? msg.fromName ?? fromDomain).trim().slice(0, 80);
-  const orgKey = orgKeyFor(business) || null;
+  const party = known ?? partyByName(read.business) ?? partyByName(msg.fromName);
+  const business = (party?.name ?? read.business ?? msg.fromName ?? fromDomain).trim().slice(0, 80);
+  // A tenant or owner isn't a business: no organization for them.
+  const orgKey = party && party.role !== "vendor" && party.role !== "agency" ? null : orgKeyFor(business) || null;
   const task = read.taskId ? active.find((t) => t.id === read.taskId) : undefined; // only ids we gave it
   const amountCents = read.amountUsd != null ? Math.round(read.amountUsd * 100) : null;
   const summary = maskSecrets(read.summary).trim();
@@ -122,6 +136,8 @@ export async function handleEmail(user: UserRow, msg: MailMessage): Promise<void
     occurredAt: msg.receivedAt,
   });
 
+  // A tenant, owner or vendor: their work order takes it, like a text from them.
+  if (party && party.role !== "manager" && (await maintenance.handlePartyEmail(party, { id: msg.id, subject: maskSecrets(msg.subject), text: maskSecrets(msg.text), summary, newTime: read.newTime, taskId: task?.id ?? null }))) return;
   // What a scheduled task was waiting for: finish it without the call.
   // A work order's follow-up belongs to the tenant's "fixed?", never to an email.
   if (task && read.settlesTask && task.status === "scheduled" && task.context?.kind !== "maintenance" && (await onEmailForTask(task.id))) return;

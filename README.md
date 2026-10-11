@@ -156,6 +156,7 @@ Every variable is documented in [.env.example](.env.example). The important ones
 | `DIAL_API_KEY` (+ values written by `dial:setup`) | Dial |
 | `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID`, `KEEWANO_PG_USER` | Keewano |
 | `TELO_PORTFOLIO_PHONES` | JSON map of portfolio ids to real phones for a live demo, e.g. `{"ten_alder_b":"+1…","own_shah":"+1…","ven_rapidair":"+1…","ven_summit":"+1…"}`. The seeded 555-01xx numbers reach nobody, and Telo never texts them on a real line |
+| `TELO_PORTFOLIO_EMAILS` | JSON map of portfolio ids to email addresses, e.g. `{"ven_rapidair":"luis@…"}`. Mail from a mapped address always reaches that party's work order; other portfolio mail is matched by name |
 | `DEMO_TARGET_PHONE` | A teammate's phone that plays any business without a number of its own |
 | `TELO_DIRECTORY` | JSON list of businesses and numbers, overriding the demo directory |
 | `DATABASE_URL` | `file:./data/telo.db` by default; a `libsql://` URL for Turso |

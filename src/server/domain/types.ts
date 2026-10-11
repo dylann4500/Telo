@@ -240,7 +240,9 @@ export interface TaskContext extends EntityRefs {
   issue?: string;
   /** Asset history says ask for a replacement price too (or the owner asked for one). */
   replaceQuote?: boolean;
-  booked?: { vendor: string; callId?: string; cents: number; startsAt: string | null; endsAt: string | null; confirmation: string | null; ownerApproved: boolean };
+  booked?: { vendor: string; callId?: string; cents: number; startsAt: string | null; endsAt: string | null; confirmation: string | null; ownerApproved: boolean; calendarEventId?: string };
+  /** Times the booked vendor moved the visit (Keewano's access.outcome counts them). */
+  reschedules?: number;
   accessConfirmed?: boolean;
   /** Calls whose booking fell through (no-show, didn't hold): never booked from again. */
   voided?: string[];
