@@ -20,6 +20,8 @@ import type { CallDTO, TaskDetailDTO } from "@/lib/types";
 import { post, useTask } from "./api";
 import { LiveAsk, LiveTranscript, VoiceBars } from "./live-call";
 import { TaskFlow } from "./task-flow";
+import { StagePill } from "./work-board";
+import { WorkOrderFlow } from "./work-order-flow";
 import { Card, Chip, SectionTitle, StatusPill, clock, shortDate, shortTime, timeAgo, useNow } from "./ui";
 
 export function TaskDetail() {
@@ -54,7 +56,7 @@ export function TaskDetail() {
       <header className="mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{task.title}</h1>
-          <StatusPill status={task.status} />
+          {task.workOrder ? <StagePill stage={task.workOrder.stage} /> : <StatusPill status={task.status} />}
         </div>
         <p className="mt-1.5 text-[14px] text-muted">
           {task.targets.length ? task.targets.join(", ") : "Who to call: still working it out"} · {task.source === "email" ? "suggested from your email" : `asked by ${task.source === "web" ? "chat" : task.source === "voice" ? "phone" : "text"}`} · {timeAgo(task.createdAt)}
@@ -63,7 +65,8 @@ export function TaskDetail() {
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-        <main className="space-y-5">
+        <main className="min-w-0 space-y-5">
+          <WorkOrderFlow task={task} />
           {task.waiting && (task.waiting.live ? <LiveAsk taskId={task.id} question={task.waiting} onDone={() => void mutate()} /> : <Waiting task={task} onDone={() => void mutate()} />)}
           {live && <LivePanel call={live} />}
           {task.status === "scheduled" && <Scheduled task={task} onDone={() => void mutate()} />}
@@ -131,11 +134,14 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Scheduled({ task, onDone }: { task: TaskDetailDTO; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
+  const w = task.workOrder;
   return (
     <Card className="border-work/30 p-4">
-      <SectionTitle>Calling later</SectionTitle>
+      <SectionTitle>{w?.stage === "checking" ? "Checking it's fixed" : w ? "Vendor booked" : "Calling later"}</SectionTitle>
       <p className="text-[15px] leading-relaxed">{task.statusDetail}</p>
-      <p className="mt-1 text-[13px] text-muted">Telo calls on its own at that time. You can text it to call now instead.</p>
+      <p className="mt-1 text-[13px] text-muted">
+        {w ? "Thirty minutes into the window, Telo asks the vendor if they're on the way and the tenant if it's fixed." : "Telo calls on its own at that time. You can text it to call now instead."}
+      </p>
       <button
         disabled={busy}
         onClick={async () => {
@@ -146,7 +152,7 @@ function Scheduled({ task, onDone }: { task: TaskDetailDTO; onDone: () => void }
         }}
         className="mt-3 rounded-lg border border-line px-3 py-1.5 text-[13px] font-medium hover:border-ink disabled:opacity-50"
       >
-        Call now
+        {w ? "Check now" : "Call now"}
       </button>
     </Card>
   );

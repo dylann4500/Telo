@@ -4,10 +4,11 @@ import { Database, MessageSquare, Phone } from "lucide-react";
 import type { StateDTO, TaskSummaryDTO } from "@/lib/types";
 import { useAppState } from "./api";
 import { DevTools } from "./dev-tools";
-import { LiveCallCard, VoiceBars } from "./live-call";
+import { VoiceBars } from "./live-call";
 import { TaskCard } from "./task-card";
 import { Thread } from "./thread";
 import { Logo, ModeChips, SectionTitle, formatPhone, timeAgo } from "./ui";
+import { Board, KpiRow, LiveStrip } from "./work-board";
 
 const NEEDS_YOU = ["needs_info", "needs_approval"];
 const WORKING = ["new", "planning", "ready", "calling", "reviewing", "scheduled"];
@@ -15,19 +16,23 @@ const WORKING = ["new", "planning", "ready", "calling", "reviewing", "scheduled"
 export function Home() {
   const { data, mutate, error } = useAppState();
   const tasks = data?.tasks ?? [];
-  const group = (statuses: string[]) => tasks.filter((t) => statuses.includes(t.status));
-  const live = tasks.filter((t) => t.live);
+  // Work orders get the board; anything else Telo is doing (rare now) keeps the old columns.
+  const other = tasks.filter((t) => !t.workOrder);
+  const group = (statuses: string[]) => other.filter((t) => statuses.includes(t.status));
   const needsYou = group(NEEDS_YOU);
   const working = group(WORKING).filter((t) => !t.live);
-  const done = tasks.filter((t) => !NEEDS_YOU.includes(t.status) && !WORKING.includes(t.status));
+  const done = other.filter((t) => !NEEDS_YOU.includes(t.status) && !WORKING.includes(t.status));
   const teloPhone = formatPhone(data?.teloPhone ?? null);
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 pb-6 sm:px-6">
+    <div className="mx-auto flex w-full max-w-[1520px] flex-1 flex-col px-4 pb-6 sm:px-6">
       <header className="flex flex-wrap items-center justify-between gap-3 py-4">
         <div className="flex items-center gap-4">
           <Logo />
-          <span className="hidden text-[14px] text-muted md:inline">Delegate anything that needs a phone call.</span>
+          <span className="hidden text-[14px] text-muted md:inline">
+            {data?.firm ? <span className="font-medium text-ink">{data.firm}</span> : null}
+            {data?.firm ? " · " : ""}Telo works the phones for your rentals.
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {teloPhone && (
@@ -41,8 +46,19 @@ export function Home() {
 
       {error && <p className="mb-3 rounded-xl bg-bad-soft px-3 py-2 text-sm text-bad">Can&apos;t reach the server. Is it running?</p>}
 
-      <div className="grid flex-1 gap-5 lg:grid-cols-[minmax(340px,420px)_1fr]">
-        <section className="flex min-h-[560px] flex-col lg:sticky lg:top-4 lg:h-[calc(100vh-6rem)]">
+      <div className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)]">
+        <main className="flex min-w-0 flex-col gap-5">
+          <KpiRow tasks={tasks} metrics={data?.metrics} />
+          <LiveStrip tasks={tasks} />
+          <Board tasks={tasks} />
+          <Column title="Needs you" tasks={needsYou} empty={null} />
+          <Column title="Other tasks" tasks={working} empty={null} />
+          <Column title="Done" tasks={done} empty={null} />
+          {data?.lastKeewanoQuery && <KeewanoQuery q={data.lastKeewanoQuery} />}
+          {data?.modes.devTools && <DevTools onChange={() => void mutate()} simulatedLine={data.modes.voice === "mock"} mail={data.modes.mail} />}
+        </main>
+
+        <section className="flex min-h-[560px] flex-col lg:sticky lg:top-4 lg:order-last lg:h-[calc(100vh-6rem)]">
           <div className="mb-2 flex items-center gap-2 px-1 text-[12px] text-muted">
             <MessageSquare className="size-3.5" />
             {data?.liveUserCall ? (
@@ -70,21 +86,6 @@ export function Home() {
               onSent={() => void mutate()}
             />
           </div>
-        </section>
-
-        <section className="flex flex-col gap-6">
-          {live.length > 0 && (
-            <div className="space-y-3">
-              {live.map((t) => (
-                <LiveCallCard key={t.id} task={t} />
-              ))}
-            </div>
-          )}
-          <Column title="Needs you" tasks={needsYou} empty={null} />
-          <Column title="Telo is on it" tasks={working} empty={live.length ? null : needsYou.length ? null : "Nothing in progress. Send Telo something that needs a call."} />
-          <Column title="Done" tasks={done} empty={null} />
-          {data?.lastKeewanoQuery && <KeewanoQuery q={data.lastKeewanoQuery} />}
-          {data?.modes.devTools && <DevTools onChange={() => void mutate()} simulatedLine={data.modes.voice === "mock"} mail={data.modes.mail} />}
         </section>
       </div>
     </div>

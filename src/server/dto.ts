@@ -224,6 +224,7 @@ function callDTO(c: CallRow): CallDTO {
           summary: c.analysis.summary,
           facts: c.analysis.facts,
           offers: c.analysis.offers.map((o) => ({ kind: o.kind, description: o.description, priceUsd: o.priceUsd })),
+          quote: c.analysis.quote ? { priceUsd: c.analysis.quote.priceUsd, availability: c.analysis.quote.availability } : null,
           commitments: c.analysis.commitments.map((x) => ({ kind: x.kind, description: x.description, amountUsd: x.amountUsd })),
           priorCommitments: c.analysis.priorCommitments ?? [],
           confirmationNumbers: c.analysis.confirmationNumbers,

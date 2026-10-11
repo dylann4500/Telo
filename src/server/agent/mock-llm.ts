@@ -475,7 +475,8 @@ export class MockLLM implements LLM {
     const ask = trade === "hvac" ? "a photo of the thermostat and the outdoor unit" : trade === "plumbing" ? "a photo of the leak and what's under it" : "a photo of the problem";
     return {
       title,
-      problem: report.replace(/\s+/g, " ").trim().slice(0, 200),
+      // What the tenant said, minus the greeting, for the vendor.
+      problem: `${title}: ${report.replace(/\s+/g, " ").trim().replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "").replace(/^\w/, (c) => c.toLowerCase())}`.slice(0, 200),
       trade,
       severity,
       emergency,

@@ -14,7 +14,7 @@ import { assetFor, assetLabel, FIRM, getAsset, getOwner, getTenancy, getUnit, ge
 import { assetHistory, rankVendors, shouldQuoteReplacement, type Scorecard } from "./portfolio/insights";
 import { containsSecret, maskSecrets } from "./redact";
 import { callIsLive, getTask, getUser, listCalls, patchTask, transitionTask } from "./tasks/repo";
-import { formatWhen, nowContext, windowLabel } from "./time";
+import { nowContext, windowLabel } from "./time";
 import { getVoice } from "./voice";
 
 // Property management: maintenance work orders, end to end.
@@ -326,7 +326,8 @@ export async function triage(task: TaskRow & { context: TaskContext }): Promise<
     never: ["Agree to more than the limit without the owner's OK", "Share the tenant's phone number, a lockbox or gate code, or any payment details", "Sign anything or promise payment terms"],
     spendLimitUsd: limit / 100,
   };
-  const goal = `Get a ${r.trade} visit for ${short}: ${r.problem}. Find out the earliest visit and the total price (trip fee and repair), and book it if it's ${usd(limit)} or less; above that, get the owner's OK while they hold.${replace ? " Also ask what a full replacement would cost." : ""}`;
+  const trade = r.trade === "hvac" ? "an HVAC" : /^[aeiou]/.test(r.trade) ? `an ${r.trade}` : `a ${r.trade}`;
+  const goal = `Get ${trade} visit for ${short}: ${r.problem.replace(/\.$/, "")}. Find out the earliest visit and the total price (trip fee and repair), and book it if it's ${usd(limit)} or less; above that, get the owner's OK while they hold.${replace ? " Also ask what a full replacement would cost." : ""}`;
   const facts: Fact[] = [...task.facts.filter((f) => f.key !== "problem"), { key: "problem", label: "Problem", value: r.problem, sensitive: false, source: "user" }];
   const moved = await transitionTask(
     task.id,

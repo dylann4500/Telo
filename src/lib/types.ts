@@ -153,6 +153,7 @@ export interface CallDTO {
     confirmationNumbers: string[];
     repName: string | null;
     nextStep: string;
+    quote: { priceUsd: number | null; availability: string | null } | null;
   } | null;
   instructions: string | null;
 }
