@@ -14,8 +14,8 @@ import { config } from "./config";
 import { statusDigest } from "./status";
 import { getCall, getTask, getUser, getUserByPhone, listQuestions, patchTask } from "./tasks/repo";
 import { formatWhen, localParts, nowContext, zonedTime } from "./time";
-import { isMaintenance, notifyParty } from "./maintenance";
-import { getOwner, getUnit } from "./portfolio";
+import { isMaintenance, notifyParty, partySays } from "./maintenance";
+import { getOwner, getUnit, partyByName, type Party } from "./portfolio";
 
 // Telo's tools during calls: what Dial's voice agent can call on Telo's MCP
 // server (and the simulated line calls the same way). Dial sends no call id,
@@ -114,7 +114,10 @@ export const TOOLS = [
   },
 ] as const;
 
-type Caller = { kind: "owner"; user: UserRow; call: CallRow | null } | { kind: "business"; user: UserRow; call: CallRow; task: TaskRow };
+type Caller =
+  | { kind: "owner"; user: UserRow; call: CallRow | null }
+  | { kind: "business"; user: UserRow; call: CallRow; task: TaskRow }
+  | { kind: "party"; user: UserRow; call: CallRow; party: Party }; // a tenant or owner Telo called
 
 /** Who is on the line, from Dial's per-call headers: the owner, a business Telo called for a task, or nobody Telo knows. */
 export async function resolveCaller(direction: string | null, other: string | null, callId?: string): Promise<Caller | null> {
@@ -124,6 +127,7 @@ export async function resolveCaller(direction: string | null, other: string | nu
     const user = call ? await getUser(call.userId) : undefined;
     if (!call || !user) return null;
     if (call.kind === "user_update") return { kind: "owner", user, call };
+    if (call.kind === "party_update") return partyCaller(user, call);
     const task = call.kind === "business" && call.taskId ? await getTask(call.taskId) : undefined;
     return task ? { kind: "business", user, call, task } : null;
   }
@@ -144,9 +148,15 @@ export async function resolveCaller(direction: string | null, other: string | nu
   const user = await getUser(call.userId);
   if (!user) return null;
   if (call.kind === "user_update") return { kind: "owner", user, call };
+  if (call.kind === "party_update") return partyCaller(user, call);
   if (call.kind !== "business" || !call.taskId) return null;
   const task = await getTask(call.taskId);
   return task ? { kind: "business", user, call, task } : null;
+}
+
+function partyCaller(user: UserRow, call: CallRow): Caller | null {
+  const party = partyByName(call.targetName);
+  return party ? { kind: "party", user, call, party } : null;
 }
 
 const first = (u: UserRow) => u.name.split(" ")[0];
@@ -189,6 +199,13 @@ const STAGES: Record<string, string> = {
 export async function callTool(name: string, args: Record<string, unknown>, headers: { direction: string | null; other: string | null; callId?: string }): Promise<ToolResult> {
   const caller = await resolveCaller(headers.direction, headers.other, headers.callId);
   if (name === "get_status" || name === "ask_telo") {
+    if (caller?.kind === "party") {
+      // A tenant or owner Telo called: their answer goes to their work order, like a text from them.
+      if (name === "get_status") return err("Not available on this call. Pass what they said to ask_telo.");
+      const said = str(args.message);
+      if (!said) return err("Pass what they said in `message`.");
+      return ok(await partySays(caller.party, caller.call.id, said));
+    }
     if (caller?.kind !== "owner") return err("This tool is only for calls with the line's owner.");
     if (name === "get_status") return ok(await statusDigest(caller.user.id));
     const message = str(args.message);

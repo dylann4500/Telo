@@ -104,7 +104,8 @@ export const calls = sqliteTable(
     direction: text("direction").$type<"outbound" | "inbound">().notNull(),
     // business: Telo calling a business for a task. user_update: Telo calling
     // the user (voice channel). user_inbound: the user calling Telo.
-    kind: text("kind").$type<"business" | "user_update" | "user_inbound">().notNull().default("business"),
+    // party_update: Telo calling a tenant or owner on a work order.
+    kind: text("kind").$type<"business" | "user_update" | "user_inbound" | "party_update">().notNull().default("business"),
     seq: integer("seq").notNull().default(0),
     attempt: integer("attempt").notNull().default(1),
     orgKey: text("org_key"),

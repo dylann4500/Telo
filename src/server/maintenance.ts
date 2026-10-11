@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, like } from "drizzle-orm";
 import * as agent from "./agent";
 import type { TriageResult } from "./agent/schemas";
 import { config } from "./config";
@@ -8,14 +8,14 @@ import type { ApprovalOption, Authority, EntityRefs, Fact, MemoryBrief, MessageP
 import { TERMINAL_STATUSES } from "./domain/types";
 import { newId } from "./ids";
 import { recordEvent } from "./memory/events";
-import { notify } from "./notify";
+import { notify, partyCapture, withVoiceCapture } from "./notify";
 import { getCalendar } from "./calendar";
 import { advance, callbackTime, finalizeTask, kick, scheduleWorkOrder } from "./orchestrator";
-import { assetFor, assetLabel, FIRM, getAsset, getOwner, getProperty, getTenancy, getUnit, getVendor, homeOf, isFictional, vendorByName, type Party } from "./portfolio";
+import { assetFor, assetLabel, FIRM, getAsset, getOwner, getProperty, getTenancy, getUnit, getVendor, homeOf, isFictional, partyByName, vendorByName, type Party } from "./portfolio";
 import { assetHistory, rankVendors, shouldQuoteReplacement, type Scorecard } from "./portfolio/insights";
 import { containsSecret, maskSecrets } from "./redact";
 import { callIsLive, getTask, getUser, listActiveTasks, listCalls, patchTask, transitionTask } from "./tasks/repo";
-import { clampToCallingHours, formatWhen, nowContext, windowLabel } from "./time";
+import { clampToCallingHours, formatWhen, nowContext, windowLabel, withinCallingHours } from "./time";
 import { getVoice } from "./voice";
 
 // Property management: maintenance work orders, end to end.
@@ -66,10 +66,24 @@ export function vendorForCall(call: Pick<CallRow, "targetName">) {
 // ------------------------------------------------------------ messages
 
 /** Texts a tenant, owner or vendor. Stored in the manager's thread (the dashboard mirrors it), delivered by SMS on a real line. */
+// What a tenant or owner has to answer or hear right away. With party calls on, Telo phones them for these.
+const CALL_KINDS = ["approval", "question", "notice", "check", "safety"];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function notifyParty(input: { party: Party; taskId?: string | null; body: string; kind: string; dedupeKey?: string }): Promise<void> {
   const body = input.body.trim();
   if (!body) return;
   const mock = getVoice().name === "mock";
+  // On a call with Telo right now: said there. Otherwise what needs them is a phone call (party calls on),
+  // inside calling hours unless a vendor is holding for it or it's about their safety.
+  const live = partyCapture(input.party.id);
+  const phoneIt =
+    !live &&
+    config.parties.calls &&
+    (input.party.role === "tenant" || input.party.role === "owner") &&
+    CALL_KINDS.includes(input.kind) &&
+    (["approval", "safety"].includes(input.kind) || withinCallingHours(new Date(), config.user.timezone));
+  const channel = live || phoneIt ? "voice" : mock ? "web" : "sms";
   const id = newId("msg");
   const party: MessageParty = { role: input.party.role, id: input.party.id, name: input.party.name };
   const inserted = await db
@@ -79,17 +93,27 @@ export async function notifyParty(input: { party: Party; taskId?: string | null;
       userId: config.user.id,
       taskId: input.taskId ?? null,
       direction: "out",
-      channel: mock ? "web" : "sms",
+      channel,
       kind: input.kind,
       body,
       dedupeKey: input.dedupeKey ?? null,
-      provider: mock ? null : getVoice().name,
+      provider: live ? "live-call" : mock && !phoneIt ? null : getVoice().name,
       status: "queued",
       party,
     })
     .onConflictDoNothing()
     .returning();
   if (!inserted.length) return;
+  if (live) {
+    live.lines.push(body);
+    await db.update(messages).set({ status: "sent" }).where(eq(messages.id, id));
+    return;
+  }
+  if (phoneIt) {
+    // In the background: the call waits while their phone is on another Telo call.
+    void callParty({ party: input.party, taskId: input.taskId ?? null, body, kind: input.kind, messageId: id }).catch((err) => console.error("[maintenance] couldn't call", input.party.role, err));
+    return;
+  }
   try {
     if (!mock) {
       if (!input.party.phone) throw new Error("No phone number on file");
@@ -111,6 +135,98 @@ export async function notifyParty(input: { party: Party; taskId?: string | null;
     console.error("[maintenance] couldn't text", input.party.role, (err as Error).message);
     await db.update(messages).set({ status: "failed", error: (err as Error).message.slice(0, 300) }).where(eq(messages.id, id));
   }
+}
+
+/** A Telo call is on this phone now (a vendor call on a shared test phone, or another party call). */
+async function phoneBusy(phone: string): Promise<boolean> {
+  const d = phone.replace(/\D/g, "").slice(-10);
+  const live = await db
+    .select({ targetPhone: calls.targetPhone })
+    .from(calls)
+    .where(and(inArray(calls.status, ["queued", "ringing", "in_progress"]), gte(calls.createdAt, new Date(Date.now() - 30 * 60_000))));
+  return live.some((c) => (c.targetPhone ?? "").replace(/\D/g, "").slice(-10) === d);
+}
+
+/** Telo phones a tenant or owner, says the message, and passes their answer to the work order through ask_telo. */
+async function callParty(input: { party: Party; taskId: string | null; body: string; kind: string; messageId: string }): Promise<void> {
+  const fail = (error: string) => db.update(messages).set({ status: "failed", error: error.slice(0, 300) }).where(eq(messages.id, input.messageId));
+  const phone = input.party.phone;
+  const mock = getVoice().name === "mock";
+  if (!phone) return void (await fail("No phone number on file"));
+  if (!mock && isFictional(phone)) return void (await fail("Fictional demo number; set TELO_PORTFOLIO_PHONES to reach this party"));
+  // After the step that sent it has finished (a booking is saved before the tenant can say yes to it),
+  // and one call at a time on a phone (the same test phone may be playing a vendor).
+  for (let i = 0; i < 100 && input.taskId && (await getTask(input.taskId))?.status === "reviewing"; i++) await sleep(mock ? 50 : 1000);
+  for (let i = 0; i < 100 && (await phoneBusy(phone)); i++) await sleep(mock ? 100 : 3000);
+  const first = firstName(input.party.name);
+  const who = input.party.role === "owner" ? "the owner of a rental property the firm manages" : "a tenant in a home the firm manages";
+  const instructions = [
+    `You are Telo, the AI assistant for ${FIRM.name}, a property management company. You are making a phone call to ${input.party.name} on behalf of ${FIRM.name}. ${first} is ${who}, and you have a short message about a repair.`,
+    `Start with: "Hi ${first}, this is Telo, the AI assistant for ${FIRM.name}. This call is recorded." Then say this, naturally and briefly: "${input.body}"`,
+    `If it asks them something (yes or no, an approval, a time), get a clear answer. Then say "One sec," call the ask_telo tool with exactly what ${first} said, and tell them what it returns.${input.kind === "approval" ? " A vendor is holding on the other line for this answer, so do it right away." : ""}`,
+    "If they ask anything else about the repair, pass it to ask_telo the same way. Never ask for passwords, card or bank details.",
+    "Then say goodbye and end the call. If you reach voicemail, hang up without leaving a message.",
+  ].join("\n\n");
+  const id = newId("call");
+  await db.insert(calls).values({
+    id,
+    userId: config.user.id,
+    taskId: input.taskId,
+    direction: "outbound",
+    kind: "party_update",
+    seq: -(Date.now() % 1_000_000_000), // keeps (task, seq, attempt) unique next to business calls
+    targetName: input.party.name,
+    targetPhone: phone,
+    purpose: `${input.kind === "approval" ? "Approval from" : "Message for"} ${first}`,
+    instructions,
+    status: "queued",
+    provider: getVoice().name,
+    startedAt: new Date(),
+  });
+  try {
+    const res = await getVoice().placeCall({ callId: id, to: phone, instructions, idempotencyKey: `telo:${id}` });
+    await db.update(calls).set({ providerCallId: res.providerCallId }).where(eq(calls.id, id));
+    await db.update(messages).set({ status: "sent" }).where(eq(messages.id, input.messageId));
+    await recordEvent({
+      userId: config.user.id,
+      taskId: input.taskId,
+      type: "message.sent",
+      summary: `Called ${input.party.name} (${input.party.role}): ${input.body.length > 120 ? `${input.body.slice(0, 117)}...` : input.body}`,
+      data: { channel: "voice", kind: input.kind, party: input.party.role },
+      typed: { channel: "voice" },
+    });
+  } catch (err) {
+    await db.update(calls).set({ status: "failed", endReason: "failed_to_place", statusDetail: (err as Error).message.slice(0, 200), endedAt: new Date(), finishedAt: new Date() }).where(eq(calls.id, id));
+    await fail((err as Error).message);
+  }
+}
+
+/** On Telo's call with a tenant or owner: what they said is handled like their text, and Telo's reply comes back to be spoken. */
+export async function partySays(party: Party, callId: string, said: string, waitMs = 20_000): Promise<string> {
+  const capture = { lines: [] as string[], closed: false, party: party.id };
+  const work = withVoiceCapture(capture, () => handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${callId}:${Date.now()}` })).catch((err) => {
+    console.error("[maintenance] couldn't take the answer", err);
+  });
+  await Promise.race([work, sleep(waitMs)]);
+  capture.closed = true; // anything later goes out the usual way
+  return capture.lines.join(" ") || "Thanks, I've passed that on to the team.";
+}
+
+/** Telo's call with a tenant or owner ended. If their answer never came through ask_telo, what they said is used now. */
+export async function partyCallFinished(call: CallRow): Promise<void> {
+  const party = partyByName(call.targetName);
+  if (!party || (party.role !== "tenant" && party.role !== "owner")) return;
+  const passed = await db.select({ id: messages.id }).from(messages).where(and(eq(messages.direction, "in"), like(messages.providerMessageId, `call:${call.id}:%`))).limit(1);
+  if (passed.length) return;
+  const said = call.transcript
+    .filter((t) => t.speaker === "other")
+    .map((t) => t.text.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/^(hello|hi|hey)\b[?.!,]*\s*/i, "")
+    .trim();
+  if (!said || /leave (a|your) message|voicemail|not available|after the (tone|beep)/i.test(said)) return;
+  await handlePartyText(party, { body: said, channel: "voice", providerMessageId: `call:${call.id}:end` });
 }
 
 async function storeInbound(party: Party, body: string, channel: string, providerMessageId: string | null, taskId: string | null): Promise<string | null> {
@@ -446,12 +562,12 @@ async function ownerText(party: Party, body: string, channel: string, providerMe
     await notifyParty({ party, taskId: q.taskId, kind: "reply", body: `Sorry, which one? ${q.options.map((o) => o.label).join(", or ")}?` });
     return true;
   }
-  await ownerDecides(q, choice, body, party);
+  await ownerDecides(q, choice, body, party, channel);
   return true;
 }
 
 /** Applies the owner's decision to the question a vendor is holding for. */
-export async function ownerDecides(q: QuestionRow, choice: ApprovalOption, note: string | null, party: Party): Promise<boolean> {
+export async function ownerDecides(q: QuestionRow, choice: ApprovalOption, note: string | null, party: Party, channel = "sms"): Promise<boolean> {
   const ctx = q.context as { callId?: string; lapsed?: boolean; askedAt?: string; target?: string; amountCents?: number };
   const approve = !/^(don'?t|do not|no|decline|not now)/i.test(choice.label);
   const onLine = !ctx.lapsed && (await callIsLive(ctx.callId));
@@ -477,7 +593,7 @@ export async function ownerDecides(q: QuestionRow, choice: ApprovalOption, note:
     callId: ctx.callId ?? null,
     type: approve ? "approval.granted" : "approval.denied",
     summary: `${party.name} (owner) ${approve ? "approved" : "declined"}: ${choice.label}${onLine ? `, while ${target} held` : ""}`,
-    typed: { approvalKind: wantsReplace ? "replace" : "repair", amountCents: ctx.amountCents, approvalChannel: "sms", approvalResponseSeconds: seconds, approvalWhileHolding: onLine },
+    typed: { approvalKind: wantsReplace ? "replace" : "repair", amountCents: ctx.amountCents, approvalChannel: channel === "voice" ? "voice" : "sms", approvalResponseSeconds: seconds, approvalWhileHolding: onLine },
     refs: isMaintenance(task) ? refsOf(task.context) : null,
   });
   await notifyParty({ party, taskId: task.id, kind: "reply", body: onLine ? `Thanks ${firstName(party.name)}. Telling ${target} now.` : `Thanks ${firstName(party.name)}. They'd hung up, so I'll call ${target} back with that.` });

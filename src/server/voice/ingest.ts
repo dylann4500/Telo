@@ -265,6 +265,9 @@ export async function finishCall(callId: string): Promise<void> {
     await expireLiveQuestions(call);
     const { onBusinessCallFinished } = await import("../orchestrator");
     await onBusinessCallFinished(call.taskId);
+  } else if (call.kind === "party_update") {
+    const { partyCallFinished } = await import("../maintenance");
+    await partyCallFinished(call);
   } else if (call.kind === "user_inbound" || call.kind === "user_update") {
     const { handleUserCallFinished } = await import("../concierge");
     await handleUserCallFinished(call.id);

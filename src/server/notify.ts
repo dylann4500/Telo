@@ -28,11 +28,18 @@ const CALL_WORTHY: readonly MessageKind[] = ["question", "approval", "result", "
 interface Capture {
   lines: string[];
   closed: boolean;
+  party?: string; // a tenant or owner on a call Telo placed; otherwise the user
 }
 const captureStore = new AsyncLocalStorage<Capture>();
 
 export function withVoiceCapture<T>(capture: Capture, fn: () => Promise<T>): Promise<T> {
   return captureStore.run(capture, fn);
+}
+
+/** The open capture for a tenant or owner on a call with Telo, if that's who a message is for. */
+export function partyCapture(partyId: string): Capture | null {
+  const c = captureStore.getStore();
+  return c && !c.closed && c.party === partyId ? c : null;
 }
 
 async function channelFor(user: UserRow, taskId: string | null | undefined): Promise<Channel> {
@@ -92,7 +99,8 @@ export async function notify(input: {
   const user = await getUser(input.userId);
   if (!user) return;
   const capture = captureStore.getStore();
-  const live = capture && !capture.closed ? capture : null;
+  // A tenant's or owner's call speaks only what's for them; the user's messages go out as usual.
+  const live = capture && !capture.closed && !capture.party ? capture : null;
   // On the simulated line the dashboard thread is the only delivery.
   const channel: Channel = live ? "voice" : getVoice().name === "mock" ? "web" : (input.channel ?? (await channelFor(user, input.taskId)));
 

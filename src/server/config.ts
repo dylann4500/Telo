@@ -102,6 +102,12 @@ export const config = {
     mockSpeed: Number(env("MOCK_CALL_SPEED") ?? "1"),
   },
 
+  parties: {
+    // Telo phones tenants and owners for what needs their answer (an approval, an entry notice, "fixed?",
+    // safety steps) instead of texting: for when texts can't get through (10DLC) or a party prefers calls.
+    calls: ["1", "true", "on", "yes"].includes((env("TELO_PARTY_CALLS") ?? "").toLowerCase()),
+  },
+
   calls: {
     maxAttemptsPerLeg: Number(env("TELO_MAX_ATTEMPTS") ?? "2"),
     // An unanswered call is retried after this many minutes, not instantly.
