@@ -2,9 +2,9 @@
 
 import clsx from "clsx";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
-import type { CallDTO, TaskSummaryDTO } from "@/lib/types";
-import { useTask } from "./api";
+import { useEffect, useRef, useState } from "react";
+import type { CallDTO, QuestionDTO, TaskSummaryDTO } from "@/lib/types";
+import { post, useTask } from "./api";
 import { clock, useNow } from "./ui";
 
 /** The call Telo is on right now: who, how long, and (on the simulated line) the words as they happen. */
@@ -31,7 +31,78 @@ export function LiveCallCard({ task }: { task: TaskSummaryDTO }) {
             Open
           </Link>
         </div>
+        {task.waiting?.live && (
+          <div className="mb-3">
+            <LiveAsk taskId={task.id} question={task.waiting} />
+          </div>
+        )}
         <LiveTranscript call={call} />
+      </div>
+    </div>
+  );
+}
+
+/** A question Telo asked while the business waits on the line: answer it right here (same as replying to the text). */
+export function LiveAsk({ taskId, question, onDone }: { taskId: string; question: QuestionDTO; onDone?: () => void }) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const now = useNow(true);
+  const live = question.live;
+  if (!live) return null;
+  const waited = Math.max(0, (now - new Date(live.askedAt).getTime()) / 1000);
+  async function send(body: Record<string, unknown>) {
+    setSending(true);
+    await post(`/api/tasks/${taskId}/answer`, body);
+    setSending(false);
+    setText("");
+    onDone?.();
+  }
+  return (
+    <div className="rise rounded-xl border border-wait/40 bg-wait-soft/60 p-3" role="group" aria-label="Telo needs your answer now">
+      <div className="flex items-center justify-between gap-2 text-[12px] font-semibold text-wait">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="live-dot size-2 rounded-full bg-wait" /> {live.target} is waiting on the line
+        </span>
+        <span className="font-mono tabular-nums">{clock(waited)}</span>
+      </div>
+      <p className="mt-1.5 text-[14px] leading-snug text-ink">{question.prompt}</p>
+      {question.kind === "approval" ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {question.options.map((o) => (
+            <button
+              key={o.id}
+              disabled={sending}
+              onClick={() => void send({ optionId: o.id })}
+              className="rounded-full border border-brand/40 bg-surface px-3 py-1 text-[13px] font-medium text-brand transition hover:bg-brand hover:text-brand-ink disabled:opacity-50"
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <form
+          className="mt-2 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) void send({ text: text.trim() });
+          }}
+        >
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={question.fields.map((f) => f.label).join(", ") || "Your answer"}
+            className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[14px] outline-none focus:border-brand"
+          />
+          <button disabled={!text.trim() || sending} className="rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-ink disabled:opacity-50">
+            Send
+          </button>
+        </form>
+      )}
+      <div className="mt-2 flex items-center justify-between text-[11.5px] text-muted">
+        <span>Telo tells them as soon as you answer.</span>
+        <button disabled={sending} onClick={() => void send({ decline: true })} className="font-medium hover:text-ink disabled:opacity-50">
+          Not now
+        </button>
       </div>
     </div>
   );

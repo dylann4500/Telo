@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import type { CallDTO, EventDTO, TaskDetailDTO } from "@/lib/types";
 import { post, useTask } from "./api";
-import { LiveTranscript, VoiceBars } from "./live-call";
+import { LiveAsk, LiveTranscript, VoiceBars } from "./live-call";
 import { Card, Chip, SectionTitle, StatusPill, clock, shortDate, shortTime, timeAgo, useNow } from "./ui";
 
 export function TaskDetail() {
@@ -63,7 +63,7 @@ export function TaskDetail() {
 
       <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
         <main className="space-y-5">
-          {task.waiting && <Waiting task={task} onDone={() => void mutate()} />}
+          {task.waiting && (task.waiting.live ? <LiveAsk taskId={task.id} question={task.waiting} onDone={() => void mutate()} /> : <Waiting task={task} onDone={() => void mutate()} />)}
           {live && <LivePanel call={live} />}
           {task.status === "scheduled" && <Scheduled task={task} onDone={() => void mutate()} />}
           {task.result && (

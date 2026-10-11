@@ -11,6 +11,7 @@ import { scenarioFor, type SimTurn } from "./mock-scenarios";
 interface SimCall {
   snapshot: ProviderCallSnapshot;
   cancelled: boolean;
+  callId?: string; // Telo's call id, so the line's tool calls find the call the way Dial's headers would
 }
 
 const g = globalThis as unknown as { __teloMockCalls?: Map<string, SimCall>; __teloMockInbound?: string; __teloMockCounts?: Map<string, number> };
@@ -24,13 +25,15 @@ async function emit(event: VoiceEvent) {
   await ingestVoiceEvent(event);
 }
 
-async function scriptFor(business: string, instructions: string): Promise<SimTurn[] | "no_answer"> {
+async function scriptFor(business: string, instructions: string): Promise<SimTurn[] | "no_answer" | { live: string }> {
   const scenario = scenarioFor(business);
   const callNumber = (callCounts.get(business.toLowerCase()) ?? 0) + 1;
   callCounts.set(business.toLowerCase(), callNumber);
   const persona = typeof scenario.persona === "function" ? scenario.persona(callNumber) : scenario.persona;
   if (persona === null) return "no_answer";
   if (Array.isArray(persona)) return persona;
+  // The call lab: Claude plays Dial's agent turn by turn, with Telo's real mid-call tools.
+  if (process.env.MOCK_AGENT === "claude" && config.llm.provider === "anthropic") return { live: persona };
   if (config.llm.provider === "anthropic") {
     try {
       const { simulateCall } = await import("../agent");
@@ -56,6 +59,7 @@ export class MockVoice implements VoiceProvider {
     if (!calls.has(providerCallId)) {
       calls.set(providerCallId, {
         cancelled: false,
+        callId: input.callId,
         snapshot: {
           providerCallId,
           direction: "outbound",
@@ -94,12 +98,44 @@ export class MockVoice implements VoiceProvider {
     await setStatus("in_progress");
     const started = Date.now();
     const turns: TranscriptTurn[] = [];
-    for (const turn of script) {
-      await sleep(900 + Math.min(4000, turn.text.length * 28));
-      if (sim.cancelled) return;
-      turns.push({ speaker: turn.speaker, text: turn.text, at: new Date().toISOString() });
+    const say = async (speaker: SimTurn["speaker"], text: string) => {
+      await sleep(900 + Math.min(4000, text.length * 28));
+      if (sim.cancelled) return false;
+      turns.push({ speaker, text, at: new Date().toISOString() });
       sim.snapshot.transcript = [...turns];
       await emit({ kind: "call.transcript_partial", providerCallId, turns: [...turns] });
+      return true;
+    };
+    if (!Array.isArray(script)) {
+      const { playLiveCall } = await import("./sim-agent");
+      try {
+        await playLiveCall({ callId: sim.callId, to: sim.snapshot.to, instructions, persona: script.live, say });
+      } catch (err) {
+        console.error("[mock] live call failed", err);
+      }
+      if (sim.cancelled) return;
+    }
+    // What the last mid-call tool brought back (an answer from the user, a free slot).
+    let answer: string | null = null;
+    let answered = true;
+    for (const turn of Array.isArray(script) ? script : []) {
+      if (turn.tool) {
+        if (turn.text && !(await say("agent", turn.text))) return;
+        const { callTool } = await import("../live-call");
+        const headers = { direction: "outbound", other: sim.snapshot.to, callId: sim.callId };
+        let r = await callTool(turn.tool.name, turn.tool.args ?? {}, headers);
+        while (/^wait_for_(answer|customer)$/.test(turn.tool.name) && r.data?.status === "waiting") {
+          // Say what the tool says to say while waiting, as Dial's agent would.
+          if (!(await say("agent", r.text.match(/Say: "([^"]+)"/)?.[1] ?? "Thanks for bearing with me, still checking."))) return;
+          r = await callTool(turn.tool.name, {}, headers);
+        }
+        const status = String(r.data?.status ?? "");
+        answered = ["answered", "known", "free", "asked"].includes(status);
+        answer = (r.data?.value ?? r.data?.choice ?? r.data?.startsAt ?? null) as string | null;
+        continue;
+      }
+      const text = !answered && turn.orElse ? turn.orElse : turn.text.replace("{answer}", answer ?? "");
+      if (!(await say(turn.speaker, text))) return;
     }
     await sleep(800);
     sim.snapshot.status = "ended";

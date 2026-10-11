@@ -40,6 +40,8 @@ export interface QuestionDTO {
   fields: { key: string; label: string }[];
   status: string;
   answeredAt: string | null;
+  /** Asked during a call: the business is waiting on the line for the answer. */
+  live: { target: string; askedAt: string } | null;
 }
 
 export interface TaskSummaryDTO {

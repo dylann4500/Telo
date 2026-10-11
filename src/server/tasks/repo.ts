@@ -93,6 +93,12 @@ export async function listQuestions(taskId: string): Promise<QuestionRow[]> {
   return db.select().from(questions).where(eq(questions.taskId, taskId)).orderBy(asc(questions.createdAt));
 }
 
+/** The question Telo asked the user during a call that's still going (a business is waiting on the line). */
+export async function openLiveQuestion(taskId: string): Promise<QuestionRow | undefined> {
+  const q = await openQuestion(taskId);
+  return q && (q.context as { live?: boolean }).live ? q : undefined;
+}
+
 export async function recentMessages(userId: string, limit = 12) {
   const rows = await db.select().from(messages).where(eq(messages.userId, userId)).orderBy(desc(messages.createdAt)).limit(limit);
   return rows.reverse();

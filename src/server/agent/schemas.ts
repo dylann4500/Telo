@@ -241,6 +241,14 @@ export const ReadEmailSchema = z.object({
 });
 export type ReadEmailResult = z.infer<typeof ReadEmailSchema>;
 
+export const ResolveTimeSchema = z.object({
+  startsAt: z
+    .string()
+    .nullable()
+    .describe("The time it names, as ISO 8601 with the user's UTC offset, resolved from now. null if it doesn't name a day and time"),
+});
+export type ResolveTimeResult = z.infer<typeof ResolveTimeSchema>;
+
 export const StatusReplySchema = z.object({
   reply: z.string().describe("The text Telo sends back. Short, specific, no filler"),
 });

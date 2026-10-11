@@ -24,8 +24,8 @@ import { newId, orgKeyFor } from "./ids";
 import { relationshipHistory } from "./memory";
 import { recordEvent } from "./memory/events";
 import { notify, type MessageKind } from "./notify";
-import { maskSecrets, redactFact } from "./redact";
-import { getTask, getUser, listCalls, listOrganizations, listRecentTasks, patchTask, transitionTask } from "./tasks/repo";
+import { maskSecrets, redactFact, SECRET_FIELD } from "./redact";
+import { getTask, getUser, listCalls, listOrganizations, listQuestions, listRecentTasks, patchTask, transitionTask } from "./tasks/repo";
 import { clampToCallingHours, formatWhen, nextWeekdayMorning, nowContext } from "./time";
 import { getVoice } from "./voice";
 import { parseDialError } from "./voice/dial";
@@ -136,9 +136,6 @@ function now(user: UserRow): string {
 }
 
 const UNREACHED: readonly CallAnalysis["outcome"][] = ["no_answer", "voicemail", "failed"];
-
-// Never asked for by text, whatever the business says it needs.
-const SECRET_FIELD = /password|passcode|\bpin\b|security (code|answer|question)|social security|\bssn\b|\bcvv\b|\bcvc\b|(full|entire|whole) (credit |debit )?card number/i;
 
 /**
  * When to call back, from a time the model proposed: in the future (at least
@@ -513,6 +510,7 @@ async function placeOne(task: TaskRow, user: UserRow, call: CallRow): Promise<bo
     authority: task.authority,
     history: task.memory?.summary || null,
     constraints: task.constraints,
+    calendar: Boolean(getCalendar()),
   });
   await db.update(calls).set({ instructions: rendered.instructions }).where(eq(calls.id, call.id));
 
@@ -961,16 +959,38 @@ async function analyze(task: TaskRow, call: CallRow, user: UserRow): Promise<Cal
     }
     return { ...empty, outcome: "failed", summary: `The call didn't go through${call.statusDetail ? ` (${call.statusDetail})` : ""}.`, nextStep: "Decide whether to retry." };
   }
+  const live = await answeredDuringCall(task, call);
   return agent.analyzeCall({
     now: now(user),
     direction: call.direction,
     task: { title: task.title, goal: task.goal },
-    agentWasGiven: call.direction === "outbound" ? shareableDetails(user.name, call.brief, task.facts) : null,
+    agentWasGiven:
+      call.direction === "outbound" ? [...shareableDetails(user.name, call.brief, task.facts), ...live.filter((l) => l.detail).map((l) => `${l.detail} (${user.name.split(" ")[0]} gave it during the call)`)] : null,
     leg: call.brief,
     transcript: call.transcript,
     endReason: call.endReason,
     history: task.memory?.summary ?? null,
+    answeredDuringCall: live.map((l) => ({ question: l.question, answer: l.answer })),
   });
+}
+
+/** What the user told Telo while this call was on (ask_customer): details to pass on, or a decision. */
+async function answeredDuringCall(task: TaskRow, call: CallRow): Promise<{ question: string; answer: string; detail: string | null }[]> {
+  const asked = (await listQuestions(task.id)).filter((q) => (q.context as { callId?: string; live?: boolean }).live && (q.context as { callId?: string }).callId === call.id);
+  const out: { question: string; answer: string; detail: string | null }[] = [];
+  for (const q of asked) {
+    const a = (q.answer ?? {}) as { keys?: string[]; optionId?: string | null; approve?: boolean; note?: string | null; declined?: boolean };
+    if (q.status === "answered" && q.kind === "approval") {
+      const label = q.options.find((o) => o.id === a.optionId)?.label ?? (a.approve === false ? "No" : "Yes");
+      out.push({ question: q.prompt, answer: `Decided: ${label}${a.note ? ` (${a.note})` : ""}`, detail: null });
+    } else if (q.status === "answered") {
+      const given = task.facts.filter((f) => (a.keys ?? []).includes(f.key)).map((f) => `${f.label}: ${f.value}`);
+      out.push({ question: q.prompt, answer: given.join("; ") || "(answered)", detail: given.join("; ") || null });
+    } else {
+      out.push({ question: q.prompt, answer: a.declined ? "Declined to share it" : "No answer before the call ended", detail: null });
+    }
+  }
+  return out;
 }
 
 const OUTCOME_FOR_KEEWANO: Record<CallAnalysis["outcome"], string> = {

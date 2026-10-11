@@ -119,6 +119,8 @@ export function analyzeCall(input: {
   transcript: TranscriptTurn[];
   endReason: string | null;
   history: string | null;
+  /** What the user told Telo while this call was on (the agent asked through Telo, the business waited). */
+  answeredDuringCall?: { question: string; answer: string }[];
 }): Promise<CallAnalysis> {
   const transcript = input.transcript.length
     ? input.transcript.map((t) => `${t.speaker === "agent" ? "TELO" : t.speaker === "other" ? "THEM" : "SYSTEM"}: ${t.text}`).join("\n")
@@ -135,6 +137,7 @@ export function analyzeCall(input: {
       details_agent_was_given: input.agentWasGiven ?? undefined,
       prior_history_given_to_agent: input.history || "(none)",
       end_reason: input.endReason ?? "unknown",
+      answered_during_call: input.answeredDuringCall?.length ? input.answeredDuringCall : undefined,
       transcript,
     }),
     schema: S.CallAnalysisSchema,
@@ -196,6 +199,18 @@ export function readEmail(input: {
     system: P.READ_EMAIL_SYSTEM,
     prompt: context({ now: input.now, directory: input.directory, open_tasks: input.openTasks, email: input.email }),
     schema: S.ReadEmailSchema,
+    effort: "low",
+  });
+}
+
+/** "Tuesday at 10" said on a call → an exact time (for checking the user's calendar mid-call). */
+export function resolveTime(input: { now: string; text: string }) {
+  return getLLM().structured({
+    name: "resolve-time",
+    tier: "fast",
+    system: P.RESOLVE_TIME_SYSTEM,
+    prompt: context({ now: input.now, said: input.text }),
+    schema: S.ResolveTimeSchema,
     effort: "low",
   });
 }

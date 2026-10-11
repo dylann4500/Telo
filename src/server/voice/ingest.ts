@@ -241,6 +241,9 @@ export async function finishCall(callId: string): Promise<void> {
     const { onBusinessCalledBack } = await import("../orchestrator");
     if (!call.taskId || !(await onBusinessCalledBack(call.taskId))) await passOnMessage(call);
   } else if (call.kind === "business" && call.taskId) {
+    // A question the business was waiting on and the user never answered lapses; the review asks again if it's still needed.
+    const { expireLiveQuestions } = await import("../live-call");
+    await expireLiveQuestions(call);
     const { onBusinessCallFinished } = await import("../orchestrator");
     await onBusinessCallFinished(call.taskId);
   } else if (call.kind === "user_inbound" || call.kind === "user_update") {

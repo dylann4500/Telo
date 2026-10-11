@@ -2,7 +2,7 @@ import { and, eq, gte } from "drizzle-orm";
 import * as agent from "./agent";
 import type { RouteResult } from "./agent/schemas";
 import { db } from "./db/client";
-import { messages, organizations, questions, tasks, users, type UserRow } from "./db/schema";
+import { messages, organizations, questions, tasks, users, type QuestionRow, type TaskRow, type UserRow } from "./db/schema";
 import type { Channel, Fact } from "./domain/types";
 import { newId, orgKeyFor } from "./ids";
 import { recordEvent } from "./memory/events";
@@ -11,7 +11,7 @@ import { advance, cancelTask, normalizePhone, phoneTarget, wakeTask } from "./or
 import { containsSecret, maskSecrets } from "./redact";
 import { formatWhen, nowContext } from "./time";
 import { answerStatus } from "./status";
-import { getCall, getTask, getUser, getUserByPhone, listActiveTasks, listRecentTasks, openQuestion, recentMessages, transitionTask } from "./tasks/repo";
+import { getCall, getTask, getUser, getUserByPhone, listActiveTasks, listRecentTasks, openLiveQuestion, openQuestion, patchTask, recentMessages, transitionTask } from "./tasks/repo";
 
 // Everything the user sends Telo (a text, a web chat message, a live voice
 // call through Dial's agent, or the transcript of a call) comes through
@@ -155,7 +155,16 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       return;
     }
     case "provide_info": {
-      const task = find("needs_info");
+      // A business waiting on the line for this answer comes first.
+      const live = action.taskId ? undefined : await liveTask(active, "info");
+      const task = live ?? find("needs_info");
+      if (task?.status === "calling") {
+        const q = await openLiveQuestion(task.id);
+        if (q?.kind === "info") {
+          await answerLive(user, task, q, action.answers, reply);
+          return;
+        }
+      }
       if (!task || task.status !== "needs_info") {
         await nothingToDo("Thanks. I'm not waiting on anything from you right now.");
         return;
@@ -217,7 +226,15 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       return;
     }
     case "decide": {
-      const task = find("needs_approval");
+      const live = action.taskId ? undefined : await liveTask(active, "approval");
+      const task = live ?? find("needs_approval");
+      if (task?.status === "calling") {
+        const q = await openLiveQuestion(task.id);
+        if (q?.kind === "approval") {
+          await decideLive(user, task.id, action.decision?.optionId ?? null, action.decision?.approve ?? true, action.decision?.note ?? null, replyChannel);
+          return;
+        }
+      }
       if (!task || task.status !== "needs_approval") {
         await nothingToDo("Nothing is waiting on a decision right now.");
         return;
@@ -281,6 +298,88 @@ async function perform(user: UserRow, action: Action, route: RouteResult, text: 
       return;
     }
   }
+}
+
+/** A task on a call right now with a question waiting on the user (the business is holding). */
+async function liveTask(active: TaskRow[], kind: "info" | "approval"): Promise<TaskRow | undefined> {
+  for (const t of active.filter((x) => x.status === "calling")) {
+    const q = await openLiveQuestion(t.id);
+    if (q?.kind === kind) return t;
+  }
+  return undefined;
+}
+
+/** The user's answer to a question Telo asked while a business waits: wait_for_customer picks it up from the task's facts. */
+async function answerLive(user: UserRow, task: TaskRow, q: QuestionRow, answers: { key: string; value: string }[], reply: (body: string, taskId?: string) => Promise<void>) {
+  const target = String((q.context as { target?: string }).target ?? task.targets[0]?.name ?? "them");
+  const incoming: Fact[] = answers
+    .filter((a) => a.value?.trim())
+    .map((a) => {
+      const f = q.fields.find((x) => x.key === a.key) ?? (q.fields.length === 1 ? q.fields[0] : undefined);
+      const key = f?.key ?? a.key;
+      return { key, label: f?.label ?? key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), value: a.value.trim(), sensitive: f?.sensitive ?? /account|member|birth|email|address|ssn|card/i.test(key), source: "user" as const };
+    });
+  if (!incoming.length) {
+    await reply(`Sorry, I didn't catch that. ${q.prompt}`, task.id);
+    return;
+  }
+  const fresh = (await getTask(task.id)) ?? task;
+  const facts = [...fresh.facts];
+  for (const f of incoming) {
+    const i = facts.findIndex((x) => x.key === f.key);
+    if (i >= 0) facts[i] = f;
+    else facts.push(f);
+  }
+  await patchTask(task.id, { facts });
+  const claimed = await db
+    .update(questions)
+    .set({ status: "answered", answeredAt: new Date(), answer: { keys: incoming.map((f) => f.key), live: true } })
+    .where(and(eq(questions.id, q.id), eq(questions.status, "open")))
+    .returning();
+  if (!claimed.length) return;
+  await patchTask(task.id, { statusDetail: `On the phone with ${target}` }, ["calling"]);
+  await recordEvent({ userId: user.id, taskId: task.id, orgKey: task.orgKey, type: "task.info_received", summary: `You told me during the call: ${incoming.map((f) => f.label).join(", ")}`, data: { live: true } });
+  await reply(`Thanks. Telling ${target} now.`, task.id);
+}
+
+/** A decision the user made while the business waits on the line (by text, by voice, or a dashboard tap). */
+export async function decideLive(user: UserRow, taskId: string, optionId: string | null, approve: boolean, note: string | null, channel?: Channel): Promise<boolean> {
+  const task = await getTask(taskId);
+  const q = task ? await openLiveQuestion(task.id) : undefined;
+  if (!task || !q || q.kind !== "approval") return false;
+  const option = q.options.find((o) => o.id === optionId) ?? (optionId ? undefined : approve ? q.options[0] : undefined);
+  const decision = [option?.label ?? (approve ? "Yes" : "No"), note].filter(Boolean).join(". ");
+  const claimed = await db
+    .update(questions)
+    .set({ status: "answered", answeredAt: new Date(), answer: { optionId: option?.id ?? null, approve, note, live: true } })
+    .where(and(eq(questions.id, q.id), eq(questions.status, "open")))
+    .returning();
+  if (!claimed.length) return false;
+  const target = String((q.context as { target?: string }).target ?? task.targets[0]?.name ?? "them");
+  // decide reads this after the call, so the review knows the user already chose.
+  await patchTask(task.id, { followUp: { reason: "user_decision", userDecision: `${decision} (decided during the call)`, callback: null }, statusDetail: `On the phone with ${target}` });
+  await recordEvent({
+    userId: user.id,
+    taskId: task.id,
+    orgKey: task.orgKey,
+    type: approve ? "approval.granted" : "approval.denied",
+    summary: `You decided during the call: ${decision}`,
+    typed: { approvalKind: "decision" },
+  });
+  await notify({ userId: user.id, taskId: task.id, kind: "reply", body: `Got it. Telling ${target} now.`, channel });
+  return true;
+}
+
+/** "Not now" on a question Telo asked mid-call: the agent carries on without it. */
+export async function declineLive(taskId: string): Promise<boolean> {
+  const q = await openLiveQuestion(taskId);
+  if (!q) return false;
+  const rows = await db
+    .update(questions)
+    .set({ status: "cancelled", answer: { declined: true } })
+    .where(and(eq(questions.id, q.id), eq(questions.status, "open")))
+    .returning();
+  return rows.length > 0;
 }
 
 /** The "Text me / Text + call me" choice, from the dashboard toggle or from asking Telo. */

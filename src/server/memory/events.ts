@@ -42,7 +42,10 @@ export type TeloEventType =
   | "message.received"
   | "preference.saved"
   | "email.received"
-  | "calendar.event_created";
+  | "calendar.event_created"
+  // During a call (local only): Telo asked the user while the business waited, or checked their calendar.
+  | "call.asked_user"
+  | "calendar.checked";
 
 export interface RecordEventInput {
   id?: string; // pass a deterministic id when the same event may be recorded twice

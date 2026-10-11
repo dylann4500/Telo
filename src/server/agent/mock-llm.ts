@@ -25,7 +25,7 @@ function parseBlocks(prompt: string): Blocks {
 }
 
 const YES = /\b(yes|yeah|yep|ok|okay|sure|accept|book it|do it|go ahead|sounds good|please do)\b/i;
-const NO = /\b(no|nope|don't|do not|decline|keep cancel|continue cancel|just cancel)\b/i;
+const NO = /\b(no|nope|don't|do not|decline|keep cancel\w*|continue cancel\w*|just cancel\w*)\b/i;
 const STATUS = /\b(status|update|how'?s|how is|how are|what'?s happening|any news|progress|did they|what did|what happened|where are we)\b/i;
 const EMAIL = /[\w.+-]+@[\w-]+\.[\w.]+/;
 const PHONE = /\+?1?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
@@ -127,6 +127,8 @@ export class MockLLM implements LLM {
         return this.readEmail(b);
       case "simulate-call":
         return { outcome: "answered", turns: [] };
+      case "resolve-time":
+        return { startsAt: laterTime(String(b.said ?? ""), b) };
       default:
         throw new Error(`MockLLM has no handler for ${name}`);
     }
@@ -178,7 +180,8 @@ export class MockLLM implements LLM {
         reply: null,
       };
     }
-    if (waiting?.openQuestion?.kind === "info" && !/\b(can you|could you|please call)\b/i.test(text)) {
+    const newRequest = /^\s*(ask|call|book|cancel|find|schedule|reschedule|get|have|tell|order)\b/i.test(text);
+    if (waiting?.openQuestion?.kind === "info" && !newRequest && !/\b(can you|could you|please call)\b/i.test(text)) {
       const fields = waiting.openQuestion.fields;
       const answers = fields.map((f, i) => {
         if (/email/i.test(f.key)) return { key: f.key, value: text.match(EMAIL)?.[0] ?? text };
@@ -372,7 +375,9 @@ export class MockLLM implements LLM {
       };
     }
     const deferred = /confirm with|check with|get back to you|call (you )?back/i.test(all);
-    if (deferred && /\/\s?month|per month|a month|discount|instead/i.test(them)) {
+    // The user already decided while the business waited on the line.
+    const decidedLive = ((b.answered_during_call as { answer: string }[] | undefined) ?? []).some((x) => /^Decided:/.test(x.answer));
+    if (deferred && !decidedLive && /\/\s?month|per month|a month|discount|instead/i.test(them)) {
       const price = prices[0] ?? null;
       return {
         ...base,

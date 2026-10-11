@@ -9,6 +9,14 @@
 export interface SimTurn {
   speaker: "agent" | "other";
   text: string;
+  /**
+   * Agent only: call one of Telo's mid-call tools here, after saying `text`
+   * (the "one moment" line). wait_for_customer keeps being called, with a
+   * "still checking" line in between, until it stops saying to wait.
+   */
+  tool?: { name: string; args?: Record<string, unknown> };
+  /** Said instead of `text` when the last tool brought no answer (timeout, declined, busy). `{answer}` in `text` is the answer. */
+  orElse?: string;
 }
 
 export interface ScriptContext {
@@ -170,6 +178,20 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
 ];
+
+// The mid-call question, offline: the rep needs the account number, Telo
+// asks the user while they hold (ask_customer), waits (wait_for_customer),
+// and passes the answer on in the same call. Answer in the dashboard.
+const baysideCall = (): SimTurn[] => [
+  agent("Hi, this is Telo, an AI assistant calling on behalf of Dylan. I'm calling about a new $15 equipment fee on the bill."),
+  other("Bayside Internet billing. I can help with that fee, but I'll need the account number first."),
+  { speaker: "agent", text: "Let me check with Dylan, one moment.", tool: { name: "ask_customer", args: { detail: "Account number", question: "What's the account number on your Bayside bill?" } } },
+  { speaker: "agent", text: "", tool: { name: "wait_for_customer" } },
+  { speaker: "agent", text: "Thanks for holding. The account number is {answer}.", orElse: "I'm sorry, I can't reach Dylan right now. I'll get that and call you back." },
+  { speaker: "other", text: "Thanks, I found it. That $15 equipment fee was added by mistake. I've removed it, so the bill is back to $70. Your confirmation number is B4410.", orElse: "No problem. Call us back with it anytime. Your reference is BI-552." },
+  { speaker: "agent", text: "Thank you. Fee removed, back to $70, confirmation B4410.", orElse: "Thank you. I'll call back with the account number, reference BI-552." },
+];
+SCENARIOS.push({ match: /bayside|westbay/i, persona: () => baysideCall(), script: () => baysideCall() });
 
 export const GENERIC: Scenario = {
   match: /.*/,

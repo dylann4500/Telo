@@ -15,6 +15,7 @@ function liveCall(c: CallRow | undefined): LiveCallDTO | null {
 }
 
 function questionDTO(q: QuestionRow): QuestionDTO {
+  const ctx = q.context as { live?: boolean; target?: string; askedAt?: string };
   return {
     id: q.id,
     kind: q.kind,
@@ -23,6 +24,7 @@ function questionDTO(q: QuestionRow): QuestionDTO {
     fields: q.fields.map((f) => ({ key: f.key, label: f.label })),
     status: q.status,
     answeredAt: iso(q.answeredAt),
+    live: ctx.live ? { target: ctx.target ?? "The business", askedAt: ctx.askedAt ?? q.createdAt.toISOString() } : null,
   };
 }
 

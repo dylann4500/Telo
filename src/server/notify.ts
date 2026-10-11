@@ -133,7 +133,8 @@ async function deliver(
       kind: input.kind,
       body,
       dedupeKey,
-      provider: channel === "web" ? null : getVoice().name,
+      // live-call: spoken by Dial's agent on a call the user is already on.
+      provider: live ? "live-call" : channel === "web" ? null : getVoice().name,
       status: "queued",
     })
     .onConflictDoNothing()

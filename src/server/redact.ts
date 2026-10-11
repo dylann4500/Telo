@@ -18,6 +18,9 @@ export function redactFact(f: Fact): Fact {
   return f.sensitive ? { ...f, value: redactValue(f.value) } : f;
 }
 
+// Never asked of the user, by text or mid-call, whatever a business says it needs.
+export const SECRET_FIELD = /password|passcode|\bpin\b|security (code|answer|question)|social security|\bssn\b|\bcvv\b|\bcvc\b|(full|entire|whole) (credit |debit )?card number/i;
+
 // Never stored, never used on a call.
 const HARD_SECRETS: RegExp[] = [
   /\b(password|passcode|passwd|pass word)\b\s*(is|:|=)?\s*\S+/gi,

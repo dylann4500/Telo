@@ -47,13 +47,33 @@ async function relevantSnapshots(userId: string) {
   return Promise.all(pick.map(taskSnapshot));
 }
 
+// Words too common to name one business on their own.
+const GENERIC_WORDS = new Set(["the", "bay", "city", "first", "great", "royal", "north", "south", "east", "west", "united", "national", "american", "pacific", "golden", "bright", "general", "global"]);
+
+/**
+ * Businesses a question names: the full name or an alias, or a distinctive
+ * word of the name ("what did Harborview email me?" → Harborview Hotel).
+ * People say the short name; the directory has the long one.
+ */
+export function mentionedBusinesses<T extends { name: string; aliases: string[] }>(question: string, orgs: T[]): T[] {
+  const lower = question.toLowerCase();
+  const full = orgs.filter((o) => [o.name, ...o.aliases].some((a) => a && a.length > 2 && lower.includes(a.toLowerCase())));
+  if (full.length) return full;
+  const words = new Set(lower.match(/[a-z0-9']+/g) ?? []);
+  return orgs.filter((o) =>
+    o.name
+      .toLowerCase()
+      .split(/[^a-z0-9']+/)
+      .some((w) => w.length >= 5 && !GENERIC_WORDS.has(w) && words.has(w)),
+  );
+}
+
 const ANALYTICAL = /\b(how many|how often|average|typical|usually|ever|most|total|count|percent|how long)\b/i;
 
 export async function answerStatus(user: UserRow, question: string, opts: { needsHistory?: boolean } = {}): Promise<string> {
   const tasks = await relevantSnapshots(user.id);
-  const lower = question.toLowerCase();
   const orgs = await listOrganizations();
-  const mentioned = orgs.filter((o) => [o.name, ...o.aliases].some((a) => a && a.length > 2 && lower.includes(a.toLowerCase())));
+  const mentioned = mentionedBusinesses(question, orgs);
 
   // Population or "ever" questions go to Keewano itself when it's connected.
   if (getMemory().name === "keewano" && ANALYTICAL.test(question)) {
