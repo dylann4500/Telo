@@ -13,44 +13,54 @@ Tenants call or text it. It calls two vendors at once, gets the owner's OK while
 [![Memory: Keewano](https://img.shields.io/badge/memory-Keewano-1d1c19)](https://keewano.com)
 [![Reasoning: Claude](https://img.shields.io/badge/reasoning-Claude-1d1c19)](https://www.anthropic.com/claude)
 
+<br/>
+
+<img src="docs/assets/readme/dashboard.webp" alt="Telo's dashboard with two vendor calls side by side: Summit Mechanical wrapping up, Rapid Air holding while Telo asks the owner to approve $650" width="100%">
+
+<sub>Two vendors on the phone at once. Rapid Air holds while Telo asks the owner to approve $650. Every image here is the app running on its simulated stack, with no API keys.</sub>
+
 </div>
 
 ---
 
-A property manager gives Telo one phone number. A tenant calls: *"The AC is out again, it's 85 in here."* Telo triages it, checks Keewano for who to call, phones two HVAC companies at once to compare windows and prices, and texts the owner while the cheaper-sooner vendor holds the line. Then it books the tenant's window with the notice the law requires, checks "on the way?" and "fixed?" during the visit, and closes the job.
+A property manager gives Telo one phone number. A tenant calls: *"The AC is out again, it's 85 in here."* Telo triages it, checks Keewano for who to call, phones two HVAC companies at once to compare windows and prices, and texts the owner while the vendor who can come tonight holds the line. Then it books the tenant's window with the notice the law requires, checks "on the way?" and "fixed?" during the visit, and closes the job.
 
 Built for firms and owner-operators with roughly 20 to 500 long-term rentals and no maintenance coordinator. A seeded portfolio (one firm, two owners, three properties, eight units, eight vendors) stands in for property-management software, so the whole thing runs without any. With no API keys it runs entirely on simulations.
 
 ## One job, start to finish
 
+<img src="docs/assets/readme/demo.gif" alt="The dashboard through one AC job: the work order opens, two vendor calls run with live transcripts, the owner is asked while Rapid Air holds, and the visit is booked" width="100%">
+
+<sub>The AC job from the tenant's call to the booking, on the simulated phone line at about 2.5× speed.</sub>
+
+Who says what:
+
 ```mermaid
 sequenceDiagram
     autonumber
-    actor T as Tenant (Maria)
+    actor T as Tenant
     participant Telo
-    participant K as Keewano
-    participant S as Summit Mechanical
+    participant S as Summit
     participant R as Rapid Air
-    actor O as Owner (Priya)
+    actor O as Owner
 
-    T->>Telo: "The AC is out again, it's 85 in here" (call, or text with photos)
-    Telo->>K: Live SQL: vendor records, Unit B's AC repairs
-    K-->>Telo: CoolBreeze no-showed twice. 3rd AC failure since June
+    T->>Telo: AC is out, 85° inside
+    Note over Telo: Keewano: 3rd AC failure since June,<br/>usual vendor no-showed twice
     par Two calls at once
-        Telo->>S: AI and recording disclosure, then window and price
-        S-->>Telo: Thursday 9 to 11, $180 diagnostic + $79 trip
+        Telo->>S: Window and price?
+        S-->>Telo: Thu 9–11, $180 + trip
     and
-        Telo->>R: AI and recording disclosure, then window and price
-        R-->>Telo: Tonight 8 to 9, $650 all in
+        Telo->>R: Window and price?
+        R-->>Telo: Tonight 8–9, $650
     end
-    Note over Telo,R: $650 is over Priya's $500 limit. Rapid Air holds.
-    Telo->>O: "Approve $650 tonight? Third failure since June. Replacement quote too?"
-    O-->>Telo: "Yes, and get a replacement quote"
-    Telo->>R: Approved. Booked, confirmation RA2231
-    Telo->>T: Tonight 8 to 9, with the entry notice
-    Telo->>S: A polite no
-    Telo->>T: At the visit: "Fixed? Reply Y or N"
-    T-->>Telo: Y. Closed with zero manager touches
+    Note over Telo,R: Over the owner's $500 limit. Rapid Air holds.
+    Telo->>O: Approve $650 tonight?
+    O-->>Telo: Yes, and quote a replacement
+    Telo->>R: Approved, book it
+    Telo->>T: Tonight 8–9, with entry notice
+    Telo->>S: Thanks, booked elsewhere
+    Telo->>T: Fixed? Y/N
+    T-->>Telo: Y (closed, 0 manager touches)
 ```
 
 ## What it does
@@ -62,6 +72,19 @@ sequenceDiagram
 | Keewano holds every unit's and vendor's history. Live SQL ranks vendors by visits, no-shows, late arrivals and first-visit fixes, and two repairs on an asset within a year (or one on an old unit) make Telo ask for a replacement price too. | The tenant gets the window and the entry notice (asking consent when it's under 24 hours). Thirty minutes in: "on the way?" to the vendor, "fixed?" to the tenant. "Y" closes the job; "nobody came" records a no-show and calls the next vendor. |
 | **Ask it anything** | **Safety and boundaries** |
 | *"Which vendor no-shows most?"* Claude writes one read-only SELECT over Telo's event columns, Telo runs it on Keewano, and the dashboard shows the SQL. | Gas, smoke, CO or flooding gets safety instructions first and a page to the manager, with no vendor call. Legal notices, evictions, screening and payment details stay with people. Telo never dials a number nobody gave it. |
+
+### Inside a work order
+
+Each work order gets its own page: a flowchart of the job as it happens, what Telo pulled from memory and why, and the rules the voice agent called under.
+
+<img src="docs/assets/readme/work-order-flow.webp" alt="The work order's flowchart: tenant report, triage, the Keewano decision, then Summit Mechanical and Rapid Air called at once" width="100%">
+
+<sub>The flowchart continues past the calls through the owner's approval, the booking, the entry notice, follow-up and close.</sub>
+
+| What Telo remembered | Ground rules for the call |
+| :--- | :--- |
+| <img src="docs/assets/readme/remembered.webp" alt="What Telo remembered: the AC's repair history and each HVAC vendor's record, with the queries behind them" width="400"> | <img src="docs/assets/readme/rules.webp" alt="Ground rules for the call: what Telo can do alone, what it asks the owner first, and what it never does" width="400"> |
+| The repair history and vendor records behind the decision, with each query's rows and timing. On the simulated stack they come from Telo's local copy of the events; with keys, from Keewano over SQL. | What the voice agent may do alone, what needs the owner while the vendor holds, and what it never does, built from the owner's approval limit. Fixed guardrails are added on top and aren't model output. |
 
 ### Who talks to Telo
 
@@ -101,28 +124,25 @@ npm run typecheck
 
 ```mermaid
 flowchart TB
-  people(["Tenants, owners, the manager and vendors, on their phones"])
-  subgraph Dial["Dial"]
-    direction LR
-    num["Telo's number<br/>calls and texts"]
-    va["Voice agent<br/>calls vendors, holds the line"]
+  P(["Tenants, owners, the manager, vendors"])
+  D["Dial<br/>Telo's number and voice agent"]
+  subgraph T["Telo: one Next.js process"]
+    W["Webhooks and MCP tools<br/>verify, dedupe, store"]
+    C["Concierge<br/>routes every message"]
+    O["Orchestrator<br/>state machine and work orders"]
+    DB[("SQLite<br/>tasks, calls, events outbox")]
   end
-  subgraph Telo["Telo: one Next.js process"]
-    direction LR
-    in["Webhooks and MCP tools<br/>verify, dedupe, store"]
-    con["Concierge<br/>routes every message"]
-    orch["Orchestrator<br/>state machine, work orders"]
-    db[("SQLite / libsql<br/>events outbox")]
-    in --> con --> orch --> db
-  end
-  subgraph Brain["Reasoning and memory"]
-    direction LR
-    llm["Claude<br/>structured outputs"]
-    kw[("Keewano<br/>event memory")]
-  end
-  people <-->|calls and texts| Dial
-  Dial <-->|webhooks, mid-call tools, outbound calls| Telo
-  Telo <-->|decisions, typed events in, live SQL out| Brain
+  L["Claude<br/>structured outputs"]
+  K[("Keewano<br/>event memory")]
+
+  P <-->|calls and texts| D
+  D -->|webhooks, mid-call tools| W
+  W --> C --> O
+  O -->|places calls| D
+  O <-->|triage, plan, read calls| L
+  O --> DB
+  DB -->|typed events, ids only| K
+  K -->|live SQL: who to call,<br/>repair or replace| O
 ```
 
 **A work order, step by step** (`src/server/maintenance.ts` on top of the task engine in `src/server/orchestrator.ts`):
